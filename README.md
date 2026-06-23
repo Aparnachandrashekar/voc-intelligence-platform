@@ -7,8 +7,41 @@ Phase 0 foundation for the graduation project. See [docs/phase-wise-architecture
 - Node.js 20+
 - Docker & Docker Compose
 - [Groq API key](https://console.groq.com/) (used for scraping extraction, enrichment, RAG, and embeddings)
+- [Git](https://git-scm.com/) and [GitHub CLI](https://cli.github.com/) (optional, for publishing the repo)
 
 **No OpenAI key required** — the stack uses Groq only.
+
+---
+
+## GitHub
+
+The project is a local git repo on `main`. To publish to GitHub:
+
+```bash
+# 1. Log in to GitHub (one-time, opens browser)
+gh auth login
+
+# 2. Create the remote repo and push
+cd "/Users/aparna/Graduation Project"
+gh repo create voc-intelligence-platform --public --source=. --remote=origin --push
+```
+
+Use a different name if you prefer, e.g. `graduation-project`:
+
+```bash
+gh repo create graduation-project --public --source=. --remote=origin --push
+```
+
+**Without GitHub CLI:** create an empty repo at https://github.com/new, then:
+
+```bash
+git remote add origin https://github.com/YOUR_USERNAME/voc-intelligence-platform.git
+git push -u origin main
+```
+
+Do not commit `.env.local` — it is gitignored. Secrets stay local.
+
+---
 
 ## Quick Start
 
