@@ -1,26 +1,23 @@
 import "./load-env";
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import path from "path";
 import { getPool } from "../lib/db";
 
 async function migrate() {
-  const sqlPath = path.join(process.cwd(), "db/migrations/001_init.sql");
-  const sql = readFileSync(sqlPath, "utf-8");
+  const migrationsDir = path.join(process.cwd(), "db/migrations");
+  const files = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+
   const pool = getPool();
 
-  console.log("Running migration: 001_init.sql");
-  await pool.query(sql);
-  console.log("Migration complete.");
+  for (const file of files) {
+    const sql = readFileSync(path.join(migrationsDir, file), "utf-8");
+    console.log(`Running migration: ${file}`);
+    await pool.query(sql);
+  }
 
-  const ext = await pool.query(
-    "SELECT extname FROM pg_extension WHERE extname = 'vector'"
-  );
-  console.log(
-    ext.rows.length > 0
-      ? "pgvector extension: enabled"
-      : "pgvector extension: MISSING"
-  );
-
+  console.log("All migrations complete.");
   await pool.end();
 }
 

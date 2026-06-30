@@ -3,9 +3,10 @@ import { getPool, insertFeedbackItem } from "../lib/db";
 
 async function seed() {
   const row = await insertFeedbackItem({
-    ingestion_pipeline: "huggingface",
-    source: "huggingface",
+    ingestion_pipeline: "live_scrape",
+    source: "play_store",
     source_id: "phase0-test-001",
+    source_url: "https://play.google.com/store/apps/details?id=com.spotify.music&review=phase0-test-001",
     product_name: "Spotify",
     content:
       "Phase 0 test row — delete after verification. Discovery playlists feel repetitive.",

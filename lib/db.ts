@@ -1,13 +1,87 @@
-import { Pool, type QueryResultRow } from "pg";
+import dns from "dns";
+import { execSync } from "child_process";
+import { Pool, type PoolConfig, type QueryResultRow } from "pg";
 import { getEnv } from "@/lib/env";
 import { assertInsertAllowed } from "@/lib/allowed-sources";
 import type { FeedbackItem, InsertFeedbackItemInput } from "@/lib/types/feedback";
 
+dns.setDefaultResultOrder("ipv4first");
+
 let pool: Pool | null = null;
+
+/** Prefer IPv4 — Supabase direct hosts are IPv6-only and fail on many networks. */
+function resolveIpv4Host(hostname: string): string {
+  try {
+    const v4 = execSync(`dig +short ${hostname} A`, {
+      encoding: "utf8",
+      timeout: 5000,
+    })
+      .trim()
+      .split("\n")
+      .find(Boolean);
+    if (v4) return v4;
+  } catch {
+    // fall through
+  }
+  return hostname;
+}
+
+function parsePgConfig(connectionString: string): PoolConfig & { isLocal: boolean } {
+  const parsed = new URL(connectionString);
+  const isLocal = /localhost|127\.0\.0\.1/.test(connectionString);
+  const password = decodeURIComponent(parsed.password);
+  const database = parsed.pathname.replace(/^\//, "") || "postgres";
+  const port = parsed.port ? Number(parsed.port) : 5432;
+
+  if (parsed.hostname.includes(".pooler.supabase.com")) {
+    return {
+      host: parsed.hostname,
+      port,
+      user: decodeURIComponent(parsed.username),
+      password,
+      database,
+      isLocal: false,
+    };
+  }
+
+  const supabaseDirect = parsed.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i);
+  const env = getEnv();
+  const usePooler =
+    Boolean(supabaseDirect) &&
+    env.SUPABASE_USE_POOLER?.toLowerCase() !== "false";
+
+  if (usePooler && supabaseDirect) {
+    const region = env.SUPABASE_POOLER_REGION ?? "us-east-1";
+    const prefix = env.SUPABASE_POOLER_HOST_PREFIX ?? "aws-0";
+    const poolPort = env.SUPABASE_POOLER_PORT ?? 5432;
+    return {
+      host: `${prefix}-${region}.pooler.supabase.com`,
+      port: poolPort,
+      user: `postgres.${supabaseDirect[1]}`,
+      password,
+      database,
+      isLocal: false,
+    };
+  }
+
+  return {
+    host: isLocal ? parsed.hostname : resolveIpv4Host(parsed.hostname),
+    port,
+    user: decodeURIComponent(parsed.username),
+    password,
+    database,
+    isLocal,
+  };
+}
 
 export function getPool(): Pool {
   if (!pool) {
-    pool = new Pool({ connectionString: getEnv().DATABASE_URL });
+    const config = parsePgConfig(getEnv().DATABASE_URL);
+    const { isLocal, ...poolConfig } = config;
+    pool = new Pool({
+      ...poolConfig,
+      ssl: isLocal ? undefined : { rejectUnauthorized: false },
+    });
   }
   return pool;
 }
@@ -39,6 +113,7 @@ function mapRow(row: QueryResultRow): FeedbackItem {
     source_id: row.source_id,
     source_url: row.source_url,
     product_name: row.product_name,
+    title: row.title ?? null,
     content: row.content,
     rating: row.rating,
     author: row.author,
@@ -57,8 +132,8 @@ export async function insertFeedbackItem(
   const result = await getPool().query(
     `INSERT INTO feedback_items (
        ingestion_pipeline, source, source_id, source_url,
-       product_name, content, rating, author, created_at, fetched_at, metadata
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       product_name, title, content, rating, author, created_at, fetched_at, metadata
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT (ingestion_pipeline, source, source_id) DO NOTHING
      RETURNING *`,
     [
@@ -67,6 +142,7 @@ export async function insertFeedbackItem(
       input.source_id,
       input.source_url ?? null,
       input.product_name ?? "Unknown",
+      input.title ?? null,
       input.content,
       input.rating ?? null,
       input.author ?? null,

@@ -1,0 +1,26 @@
+{
+  "product_name": "Spotify",
+  "app_store": {
+    "enabled": true,
+    "app_id": "324684580",
+    "app_slug": "spotify-music-and-podcasts",
+    "countries": ["us", "gb", "in"],
+    "pages": 10,
+    "throttle_ms": 500
+  },
+  "play_store": {
+    "enabled": true,
+    "lang": "en",
+    "app_id": "com.spotify.music",
+    "sort": "newest",
+    "countries": ["us", "gb", "in"],
+    "max_per_country": 1000,
+    "throttle_ms": 600
+  },
+  "forum": {
+    "enabled": false,
+    "subreddits": ["spotify"],
+    "listing": "new",
+    "limit": 100
+  }
+}

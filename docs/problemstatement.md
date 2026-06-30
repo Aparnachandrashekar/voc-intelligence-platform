@@ -4,7 +4,7 @@
 
 Product teams depend on user feedback to understand pain points, validate ideas, and prioritize work. In practice, that feedback is fragmented across app store reviews, Reddit discussions, and other public channels—high in volume, low in structure, and difficult to synthesize by hand.
 
-The challenge is not collecting more feedback, but **turning unstructured, multi-source input into actionable insight**. Teams need a system that aggregates feedback at scale, enriches it with AI, and answers product questions in natural language—with evidence they can trust.
+The challenge is not collecting more feedback, but **turning unstructured, multi-source input into actionable insight**. Teams need a system that aggregates feedback at scale, enriches it with AI, and surfaces insights through **detailed in-app reports** and **ad-hoc natural-language Q&A**—with evidence they can trust.
 
 ---
 
@@ -17,27 +17,52 @@ Build an AI-powered web application that aggregates and analyzes large-scale use
 - Feature requests and emerging themes
 - Product opportunities backed by real user voices
 
-The platform will ingest feedback from multiple sources, enrich each item using LLM-powered analysis, and expose insights through a **Retrieval-Augmented Generation (RAG)** query interface.
+The platform has **two complementary modes** over the same ingested data:
+
+| Mode | Priority | Purpose |
+|------|----------|---------|
+| **Analysis engine** | Primary | Pre-built, filterable reports in the web UI (overview, pain points, feature requests, trends) |
+| **RAG interface** | Secondary | Ad-hoc questions with evidence-backed answers and citations |
+
+Both modes draw from the same enriched feedback database and share the same [anti-hallucination guardrails](./guardrails.md).
 
 ---
 
 ## System Overview
 
 ```mermaid
-flowchart LR
+flowchart TB
     A[Data Ingestion] --> B[AI Enrichment]
-    B --> C[Vector Storage]
-    C --> D[RAG Query Interface]
-    D --> E[Structured Insights]
+    B --> C[Analysis Reports]
+    B --> D[Vector Storage]
+    D --> E[Explore Search]
+    D --> F[RAG Ask Interface]
 ```
 
 | Stage | Purpose |
 |-------|---------|
 | **Ingestion** | Collect and normalize feedback from external sources |
 | **Enrichment** | Classify sentiment, extract themes, pain points, and goals |
+| **Analysis reports** | SQL-driven dashboards with counts, trends, and verbatim quotes |
 | **Vector storage** | Embed and index content for semantic retrieval |
+| **Explore** | Semantic search with filters (bridge between reports and RAG) |
 | **RAG interface** | Answer natural-language questions with cited evidence |
-| **Insight generation** | Surface recurring patterns and opportunities automatically |
+
+---
+
+## Web UI Structure
+
+1. **Reports (default landing)** — primary analysis engine
+   - Overview: volume, sentiment, top themes, source breakdown
+   - Pain points: ranked complaints with sample quotes
+   - Feature requests: ranked requests with evidence
+   - Trends: sentiment and theme frequency over time
+
+2. **Explore** — semantic search with source/date/sentiment filters
+
+3. **Ask** — RAG chat for exploratory questions not covered by reports
+
+Reports use **backend-computed statistics only** (never LLM-guessed numbers). Groq may optionally narrate pre-computed clusters in a later phase.
 
 ---
 
@@ -54,7 +79,7 @@ flowchart LR
 | Pipeline | Integration | Platforms / data |
 |----------|-------------|------------------|
 | **1 — Hugging Face** | Hub API / `datasets` library | Single configured dataset (`HF_DATASET_ID` — **TBD, you will provide the ID**) |
-| **2 — Live scrape** | n8n + Playwright/HTTP → Groq extraction | Apple App Store, Google Play Store, Quora, Twitter/X, community forums |
+| **2 — Live scrape** | Scripts / Playwright/HTTP → Groq extraction | Apple App Store, Google Play Store, Quora, Twitter/X, community forums |
 
 **Live-scrape targets (Pipeline 2 only):**
 
@@ -66,70 +91,23 @@ flowchart LR
 | Twitter / X | `twitter` |
 | Community forums | `forum` |
 
-All ingested content is normalized into a consistent schema, tagged with `ingestion_pipeline` (`huggingface` \| `live_scrape`), and validated before storage. URLs outside the configured scrape allowlist are rejected.
+All ingested content is normalized into a consistent schema, tagged with `ingestion_pipeline` (`huggingface` \| `live_scrape`), and validated before storage.
 
 ---
 
 ## External Integrations
 
-### Groq API — Web Scraping & Extraction
+### Groq API
 
-Groq provides fast LLM inference and is used as the **intelligent extraction layer** for internet-sourced feedback. Groq does not fetch pages itself; it processes raw content after a fetch step.
+Groq powers extraction (live scrape), enrichment, optional report narratives, RAG synthesis, and embeddings. Groq must **never invent feedback** — it only parses or summarizes stored rows. See [guardrails.md](./guardrails.md).
 
-```mermaid
-flowchart LR
-    URL[Target URL] --> FETCH[n8n / Playwright<br>Fetch raw HTML or text]
-    FETCH --> GROQ[Groq API<br>Extract structured feedback]
-    GROQ --> NORM[Normalize to feedback_items schema]
-    NORM --> PG[(PostgreSQL)]
-```
-
-**Groq is responsible for (Pipeline 2 only):**
-
-- Parsing unstructured web page content into structured fields (content, author, rating, timestamp)
-- Filtering noise (navigation, ads, boilerplate) from scraped pages
-- Classifying whether a page section contains user feedback vs. irrelevant content
-
-**Groq must NOT invent data.** Every extracted item is validated against the raw fetched page before insert. Groq may also power enrichment and RAG generation, but only as a **summarizer** of stored rows — never as a data source.
-
-**Typical flow:**
-
-1. n8n workflow triggers on a schedule or URL list
-2. HTTP Request or Playwright node fetches the raw page
-3. Content is sent to Groq with an extraction prompt (structured JSON output)
-4. Parsed records are deduplicated and written to PostgreSQL
-
-**Environment variables:** `GROQ_API_KEY`, `GROQ_MODEL` (e.g. `llama-3.3-70b-versatile`)
+**Environment variables:** `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_EMBEDDING_MODEL`
 
 ### Hugging Face — Dataset Connector
 
-Pre-built datasets are loaded directly from the Hugging Face Hub without manual scraping.
+Pre-built datasets loaded from Hugging Face Hub. **Primary dataset:** `HF_DATASET_ID` (**TBD**).
 
-```mermaid
-flowchart LR
-    HF[Hugging Face Hub] --> DS[datasets library<br>or Hub API]
-    DS --> MAP[Field mapping layer]
-    MAP --> NORM[Normalize to feedback_items schema]
-    NORM --> PG[(PostgreSQL)]
-```
-
-**Hugging Face is responsible for:**
-
-- Bulk import of labeled feedback datasets (starting with the Spotify Reddit dataset)
-- Incremental re-import when dataset revisions are published
-- Mapping dataset-specific column names to the platform's normalized schema
-
-**Primary dataset:** Configured via `HF_DATASET_ID` (**TBD — dataset ID to be provided**). Only this dataset may be imported; all other Hub datasets are blocked.
-
-**Integration options:**
-
-| Method | Use case |
-|--------|----------|
-| Python `datasets` library | One-time or scheduled batch import via script or n8n Execute Command |
-| Hugging Face Hub API | Fetch dataset metadata and parquet/JSON shards over HTTP |
-| n8n HTTP Request node | Call a Next.js `/api/ingest/huggingface` endpoint that wraps the loader |
-
-**Environment variables:** `HF_TOKEN` (optional, for private or gated datasets), `HF_DATASET_ID`, `HF_DATASET_SPLIT`
+**Environment variables:** `HF_TOKEN` (optional), `HF_DATASET_ID`, `HF_DATASET_SPLIT`
 
 ---
 
@@ -137,78 +115,46 @@ flowchart LR
 
 ### 1. Data Ingestion
 
-Automated workflows to collect feedback from configured sources, normalize fields (text, rating, timestamp, source, product), and load data into the application database.
-
-**Implementation:** n8n ingestion workflows
+Automated collection from Hugging Face and live web scraping; normalized into PostgreSQL.
 
 ### 2. AI Enrichment
 
-For each review or discussion, the system should:
+For each review or discussion: sentiment, themes, pain points, user goals, feature requests. Stored in `enrichment_results` for reports and filters.
 
-- Generate embeddings for semantic search
-- Classify sentiment (positive, negative, neutral)
-- Extract themes and topic labels
-- Identify user pain points
-- Identify user goals and motivations
-- Extract feature requests
+### 3. Analysis Reports (Primary)
 
-Enrichment outputs must be stored alongside the original content for filtering, reporting, and retrieval.
+In-app report pages with filters (source, date, sentiment):
 
-### 3. Vector Search
+- Quantitative blocks computed via SQL (counts, distributions, trends)
+- Evidence blocks with verbatim quotes from the database
+- No PDF export in MVP — reports live entirely in the web UI
 
-- Store embeddings in a vector-enabled database
-- Support semantic retrieval of feedback relevant to a query or theme
-- Return source documents as evidence for downstream analysis
+### 4. Vector Search & Explore
 
-### 4. Retrieval-Augmented Generation (RAG)
+Semantic retrieval over embedded feedback with filters.
 
-Users ask questions in plain language. The system:
+### 5. Retrieval-Augmented Generation (Secondary)
 
-1. Retrieves the most relevant feedback **from PostgreSQL only** (no live web fetch at query time)
-2. Refuses to answer if retrieved evidence is below minimum count and similarity thresholds
-3. Analyzes the retrieved set with an LLM using **closed-world prompts** (no outside knowledge)
-4. Validates every quote and statistic against retrieved rows before returning
-5. Returns a synthesized answer grounded in actual user quotes with source attribution
-
-If evidence is insufficient, the bot returns an explicit `insufficient_evidence` response — **it never guesses or hallucinates**. Full rules: [guardrails.md](./guardrails.md).
-
-### 5. Insight Generation
-
-Beyond ad-hoc queries, the platform should automatically surface:
-
-- Recurring complaints
-- Common feature requests
-- User motivations and jobs-to-be-done
-- Emerging themes over time
-- Product opportunity areas
-
----
-
-## Example Questions
-
-The platform should support questions such as:
-
-- *Why do users struggle to discover new music?*
-- *What are the biggest frustrations with recommendations?*
-- *What unmet needs consistently appear across reviews?*
-- *What listening behaviors are users trying to achieve?*
-- *Which user segments face different discovery challenges?*
-- *What product opportunities emerge from user feedback?*
+Natural-language Q&A with closed-world prompts, evidence gates, and quote validation. Returns `insufficient_evidence` when data is lacking — never guesses.
 
 ---
 
 ## Expected Output
 
-Every query response should follow a consistent structure:
+### Report pages
+
+Each report includes filterable stats, ranked themes/pain points/feature requests, source attribution, and supporting user quotes.
+
+### RAG responses
 
 | Section | Description |
 |---------|-------------|
 | **Executive summary** | Concise answer to the question |
-| **Key findings** | Main insights derived from the data |
+| **Key findings** | Main insights derived from retrieved data |
 | **Supporting user quotes** | Direct evidence grouped by theme |
-| **Theme breakdown** | How feedback clusters around topics |
-| **Source attribution** | Which platforms and items support each finding |
-| **Product recommendations** | Suggested actions or opportunity areas |
+| **Theme breakdown** | Clusters with backend-computed counts |
+| **Source attribution** | Platform breakdown |
+| **Product recommendations** | Actions implied by retrieved evidence |
 
 ---
 
@@ -216,33 +162,21 @@ Every query response should follow a consistent structure:
 
 | Component | Technology |
 |-----------|------------|
-| Frontend | Next.js |
+| Frontend | Next.js (Reports / Explore / Ask) |
 | Database | PostgreSQL + pgvector |
-| Web scraping & extraction | n8n + Playwright/HTTP → **Groq API** |
-| Dataset import | **Hugging Face Hub** (`datasets` library or API) |
-| Embeddings | Groq embedding models (`GROQ_EMBEDDING_MODEL`) |
+| Web scraping & extraction | Playwright/HTTP → **Groq API** |
+| Dataset import | **Hugging Face Hub** |
+| Embeddings | Groq (`GROQ_EMBEDDING_MODEL`) |
 | Analysis & generation | Groq API |
-| Query pattern | Retrieval-Augmented Generation (RAG) + [guardrails](./guardrails.md) |
-| Workflow orchestration | n8n |
-
----
-
-## Anti-Hallucination Guardrails (Summary)
-
-| Stage | Guardrail |
-|-------|-----------|
-| **Ingestion** | Two pipelines only (HF + live scrape); Groq output grounded against raw HTML; allowlisted domains |
-| **Enrichment** | Extract labels from stored text only; temperature 0 |
-| **Retrieval** | Search ingested DB only; minimum similarity threshold |
-| **RAG** | No answer without ≥ 3 qualifying retrieved items; quotes validated; counts computed in backend |
-| **Blocked** | Inventing reviews, quotes, stats, or recommendations; querying the internet at answer time |
-
-See [guardrails.md](./guardrails.md) for the full specification and implementation checklist.
+| Report analytics | SQL aggregations (`lib/reports/aggregations.ts`) |
+| Query pattern | RAG + [guardrails](./guardrails.md) |
 
 ---
 
 ## Success Criteria
 
-A product team member should be able to ask a single natural-language question and receive a synthesized, evidence-backed answer drawn **only** from ingested Hugging Face dataset rows and live-scraped App Store, Play Store, Quora, Twitter, and forum feedback — without manually reading each source item.
+**Primary:** A user opens the Reports section and sees detailed, filterable analysis of all ingested feedback — pain points, themes, trends, quotes, and source attribution — without asking a question.
 
-The platform succeeds when it reliably transforms this data into **actionable product insights** while **never hallucinating** content that is not in the database.
+**Secondary:** A user switches to Ask and receives a guardrailed, evidence-backed answer to a natural-language question.
+
+Both draw from ingested Hugging Face and live-scraped data only, with **no hallucinated content**.

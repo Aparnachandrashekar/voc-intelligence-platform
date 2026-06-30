@@ -2,9 +2,11 @@ import {
   FEEDBACK_SOURCES,
   INGESTION_PIPELINES,
   LIVE_SCRAPE_SOURCES,
+  STATIC_IMPORT_SOURCES,
   type FeedbackSource,
   type IngestionPipeline,
   type LiveScrapeSource,
+  type StaticImportSource,
 } from "@/lib/types/feedback";
 import { getScrapeAllowlist } from "@/lib/env";
 
@@ -18,6 +20,12 @@ export function isFeedbackSource(value: string): value is FeedbackSource {
 
 export function isLiveScrapeSource(value: string): value is LiveScrapeSource {
   return (LIVE_SCRAPE_SOURCES as readonly string[]).includes(value);
+}
+
+export function isStaticImportSource(
+  value: string
+): value is StaticImportSource {
+  return (STATIC_IMPORT_SOURCES as readonly string[]).includes(value);
 }
 
 /** Map a URL hostname to a feedback source (live scrape only). */
@@ -77,6 +85,12 @@ export function assertInsertAllowed(input: {
     throw new Error(`Invalid source: ${input.source}`);
   }
 
+  if (input.ingestion_pipeline === "static_import") {
+    throw new Error(
+      "static_import (Kaggle) pipeline is removed — use live_scrape for App Store and Play Store only"
+    );
+  }
+
   if (input.ingestion_pipeline === "huggingface") {
     if (input.source !== "huggingface") {
       throw new Error("Hugging Face pipeline requires source=huggingface");
@@ -85,6 +99,11 @@ export function assertInsertAllowed(input: {
   }
 
   if (input.ingestion_pipeline === "live_scrape") {
+    if (input.source !== "app_store" && input.source !== "play_store") {
+      throw new Error(
+        `Only app_store and play_store are enabled; got: ${input.source}`
+      );
+    }
     if (!isLiveScrapeSource(input.source)) {
       throw new Error(`Invalid live_scrape source: ${input.source}`);
     }

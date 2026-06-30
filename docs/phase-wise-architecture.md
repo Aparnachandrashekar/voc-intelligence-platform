@@ -8,18 +8,14 @@ This document defines the implementation phases for the [AI-Powered Voice of Cus
 
 ```mermaid
 flowchart TB
-    subgraph Sources["Pipeline 2 — Live Scrape Targets"]
+    subgraph Sources["Pipeline 1 (Primary) — Live Scrape: Spotify App Reviews"]
         AS[Apple App Store]
         GP[Google Play Store]
-        QU[Quora]
-        TW[Twitter / X]
-        FF[Community Forums]
     end
 
-    subgraph HFLayer["Pipeline 1 — Hugging Face"]
-        HF[Hugging Face Hub<br>HF_DATASET_ID TBD]
-        HFAPI[Hub API / datasets library]
-        HFMAP[Field Mapping]
+    subgraph StaticLayer["Pipeline 2 (Secondary) — Kaggle Static Import"]
+        KG[Kaggle Spotify dataset<br>historical reviews]
+        CSV[CSV parser / column mapping]
     end
 
     subgraph GroqLayer["Groq Extraction — Parse Only"]
@@ -34,7 +30,7 @@ flowchart TB
         AL[Source Allowlist]
     end
 
-    subgraph Ingestion["Ingestion Layer (n8n)"]
+    subgraph Ingestion["Ingestion Layer (scripts / n8n)"]
         WF[Scheduled Workflows]
         NORM[Normalize & Deduplicate]
     end
@@ -56,16 +52,16 @@ flowchart TB
     end
 
     subgraph UI["Frontend (Next.js)"]
-        DASH[Dashboard]
+        DASH[Dashboard - main landing]
         SEARCH[Semantic Search]
         CHAT[Query Interface]
         REPORTS[Reports]
     end
 
-    AS & GP & QU & TW & FF --> AL
+    AS & GP --> AL
     AL --> FETCH --> GROQ --> VAL --> WF
 
-    HF --> HFAPI --> HFMAP --> WF
+    KG --> CSV --> WF
 
     WF --> NORM --> PG
     PG --> ENR --> PG
@@ -79,12 +75,17 @@ flowchart TB
 
     API --> PG
     DASH --> API
+    DASH --> RAG
     SEARCH --> API
     CHAT --> RAG
     REPORTS --> INS
 ```
 
-> **Data policy:** Only two ingestion pipelines are allowed — Hugging Face (`HF_DATASET_ID`) and live web scraping (App Store, Play Store, Quora, Twitter/X, forums). Full guardrail spec: [guardrails.md](./guardrails.md).
+> **Data policy:** Two ingestion pipelines, both **Spotify app reviews only**:
+> - **Pipeline 1 (primary)** — live scrape of the Spotify app on the Apple App Store and Google Play Store (fresh reviews; drives the dashboard).
+> - **Pipeline 2 (secondary)** — Kaggle Spotify reviews dataset (`STATIC_DATASET_PATH`) for history, trend baselines, and a larger sample size.
+>
+> All rows carry `product_name = 'Spotify'`. App identity is pinned to the Spotify apps (`324684580`, `com.spotify.music`). Any optional future context source (forums/social) must keyword-filter to Spotify-app-review content. Full guardrail spec: [guardrails.md](./guardrails.md). UI/dashboard spec: [UI.md](../UI.md).
 
 ---
 
@@ -93,12 +94,81 @@ flowchart TB
 | Phase | Name | Goal | Key Deliverable |
 |-------|------|------|-----------------|
 | 0 | Foundation | Project scaffolding and data model | Running app + empty database |
-| 1 | Data Ingestion | Load feedback via HF + live scrape only | Normalized feedback in PostgreSQL |
+| 1 | Data Ingestion | Live scrape (primary) + Kaggle static (secondary), Spotify only | Normalized feedback in PostgreSQL |
 | 2 | AI Enrichment | Classify and tag every feedback item | Enriched records with metadata |
+| **5-lite** | **Reports UI** | **Primary analysis engine (SQL-only)** | **4 in-app report pages** |
 | 3 | Vector Search | Enable semantic retrieval | Working search API over embeddings |
-| 4 | RAG Query Interface | Answer NL questions with evidence | End-to-end query → structured response |
-| 5 | Dashboard & Insights | Visualize trends and auto-surface patterns | Interactive dashboard |
-| 6 | Extensions | Reporting, hybrid search, trend alerts | PDF export, alerts (no new data pipelines) |
+| 4 | RAG Query Interface | Secondary ad-hoc Q&A with evidence | Ask tab + `/api/query` |
+| 5-full | Insight Engine | Groq narratives on pre-computed stats | Optional report summaries |
+| 6 | Extensions | Hybrid search, trend alerts | No PDF export in MVP |
+
+---
+
+## Recommended Implementation Order (Analysis-First)
+
+```mermaid
+flowchart LR
+    P0[Phase0 Foundation] --> P1[Phase1 Ingestion]
+    P1 --> P2[Phase2 Enrichment]
+    P2 --> P5lite[Phase5-lite Reports]
+    P2 --> P3[Phase3 VectorSearch]
+    P3 --> P4[Phase4 RAG Ask]
+    P3 --> P5full[Phase5-full Insights]
+    P4 --> Demo[Graduation Demo]
+    P5lite --> Demo
+```
+
+1. **Phase 0–1** — Data flowing from live scrape (primary) + Kaggle static (secondary)
+2. **Phase 2** — Enrichment tags power reports
+3. **Phase 5-lite** — Demo-able analysis engine **before RAG**
+4. **Phase 3–4** — Explore search + Ask tab
+5. **Phase 5-full** — Optional Groq narratives on report sections
+
+---
+
+## Phase 5-lite: Reports UI (Primary — Analysis Engine)
+
+**Goal:** Deliver the primary product experience — detailed in-app reports without requiring vector search or RAG.
+
+**Depends on:** Phase 2 enrichment (SQL aggregations over `enrichment_results`).
+
+### Report Pages
+
+| Route | Report | Data |
+|-------|--------|------|
+| `/reports/overview` | Overview | Totals, sentiment distribution, top themes, source breakdown |
+| `/reports/pain-points` | Pain points | Ranked pain points, counts, sample quotes |
+| `/reports/feature-requests` | Feature requests | Ranked requests, counts, sample quotes |
+| `/reports/trends` | Trends | Sentiment/theme frequency over time |
+
+### API Routes
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/reports/overview` | Overview stats + top themes |
+| `GET /api/reports/pain-points` | Ranked pain points + quotes |
+| `GET /api/reports/feature-requests` | Ranked feature requests + quotes |
+| `GET /api/reports/trends` | Time-series sentiment/themes |
+
+All endpoints accept query params: `source`, `sentiment`, `date_from`, `date_to`.
+
+### Design Rules
+
+- All counts and percentages computed in SQL — **never by LLM**
+- Quotes are verbatim `content` from `feedback_items`
+- Filters on every report page
+- No PDF export in MVP
+
+### Deliverables
+
+- [ ] `lib/reports/aggregations.ts` — pure SQL report queries
+- [ ] `app/reports/overview/page.tsx` (+ pain-points, feature-requests, trends)
+- [ ] `app/api/reports/*` routes
+- [ ] Shared nav: Reports (default) / Explore / Ask
+
+### Exit Criteria
+
+User opens Reports and sees filterable analysis with stats and real quotes — no question required.
 
 ---
 
@@ -123,55 +193,58 @@ flowchart LR
 | Next.js app | Frontend shell, API routes, shared types |
 | PostgreSQL | Primary datastore for feedback and metadata |
 | pgvector | Vector column support (enabled early, used in Phase 3) |
-| Environment config | API keys (`GROQ_API_KEY`, `HF_TOKEN`), DB connection |
-| Groq client | Extraction only for live scrape (`lib/groq.ts`) — not a data source |
-| Hugging Face loader | Single-dataset import (`lib/huggingface.ts`) — `HF_DATASET_ID` TBD |
+| Environment config | API keys (`GROQ_API_KEY`), `STATIC_DATASET_PATH`, DB connection |
+| Groq client | Extraction only for the HTML scrape path (`lib/groq.ts`) — not a data source |
+| Static import loader | Kaggle CSV import (`lib/static-import.ts`) — `STATIC_DATASET_PATH` |
 | Guardrail modules | `lib/guardrails/*` — evidence gate, quote validator, source allowlist |
 
-### Data Model (initial)
+### Data Model (current — after migration 003)
 
 ```
 feedback_items
 ├── id
-├── ingestion_pipeline  (huggingface | live_scrape)  ← required
-├── source              (app_store | play_store | quora | twitter | forum | huggingface)
+├── ingestion_pipeline  (static_import | live_scrape; legacy huggingface retained)  ← required
+├── source              (app_store | play_store | quora | twitter | forum)
 ├── source_id           (external dedup key)
 ├── source_url          (nullable; required for live_scrape)
-├── product_name
+├── product_name        (always 'Spotify')
+├── title               (nullable; app/play review title)
 ├── content
-├── rating              (nullable)
+├── rating              (nullable; 1–5)
 ├── author              (nullable)
 ├── created_at
 ├── ingested_at
 ├── fetched_at          (nullable; live_scrape only)
-└── metadata            (jsonb — raw_html, hf_dataset_id, evidence_spans, etc.)
+├── metadata            (jsonb — scrape_target_url, dataset, evidence_spans, etc.)
+└── content_hash        (generated; md5(content) for dedup)
 
 Constraints:
   UNIQUE (ingestion_pipeline, source, source_id)
-  CHECK ingestion_pipeline IN ('huggingface', 'live_scrape')
+  CHECK ingestion_pipeline IN ('huggingface', 'static_import', 'live_scrape')
   CHECK source IN ('app_store', 'play_store', 'quora', 'twitter', 'forum', 'huggingface')
+  CHECK (ingestion_pipeline <> 'live_scrape' OR source_url IS NOT NULL)
 ```
 
 ### Deliverables
 
-- [ ] Next.js + TypeScript project initialized
-- [ ] PostgreSQL database with `feedback_items` table
-- [ ] pgvector extension installed
-- [ ] Basic health-check API route
-- [ ] n8n instance configured (local or cloud)
-- [ ] Groq API key configured; test extraction call succeeds
-- [ ] Hugging Face connector stub (`/api/ingest/huggingface`) ready
-- [ ] Guardrail stubs: `lib/allowed-sources.ts`, `lib/guardrails/evidence-gate.ts`
+- [x] Next.js + TypeScript project initialized
+- [x] PostgreSQL database with `feedback_items` table
+- [x] pgvector extension installed
+- [x] Basic health-check API route
+- [ ] Optional automation (n8n or cron) for scheduled scrape
+- [x] Groq API key configured; test extraction call succeeds
+- [x] Static import connector (`/api/ingest/static`) ready
+- [x] Guardrail stubs: `lib/allowed-sources.ts`, `lib/guardrails/evidence-gate.ts`
 
 ### Exit Criteria
 
-App runs locally; database accepts inserts; Groq and Hugging Face credentials are validated; n8n can call a webhook or write to the DB.
+App runs locally; database accepts inserts; Groq credentials validated; ingestion scripts can write Spotify reviews to the DB.
 
 ---
 
 ## Integration Modules
 
-Dedicated integration points for Groq and Hugging Face. Both modules live in the Next.js backend and are callable from n8n webhooks or batch scripts.
+Dedicated integration points for Groq (HTML extraction) and the Kaggle static import. Both modules live in the Next.js backend and are callable from API routes or batch scripts.
 
 ### Groq API — Web Scraping & Extraction
 
@@ -239,175 +312,161 @@ flowchart TB
 
 ---
 
-### Hugging Face — Dataset Connector
+### Kaggle — Static Import Connector (Pipeline 2, secondary)
+
+Historical Spotify reviews loaded in bulk from a Kaggle CSV. No LLM is used on import — rows map 1:1 from the file, so nothing can be hallucinated. This provides trend history and a larger sample size to contextualize the live data.
 
 ```mermaid
 flowchart LR
-    HF[Hugging Face Hub] --> LOAD[Load dataset split]
-    LOAD --> MAP[Map columns → feedback_items]
-    MAP --> DEDUP[Deduplicate by source_id]
+    KG[Kaggle CSV file/folder] --> READ[Read STATIC_DATASET_PATH]
+    READ --> MAP[Auto-detect columns → feedback_items]
+    MAP --> DEDUP[Deduplicate by source_id + content_hash]
     DEDUP --> PG[(PostgreSQL)]
 ```
 
 | Endpoint / module | Purpose |
 |-------------------|---------|
-| `lib/huggingface.ts` | Dataset loader using `datasets` or Hub HTTP API |
-| `POST /api/ingest/huggingface` | Trigger import for a configured dataset |
-| `GET /api/ingest/huggingface/status` | Last import run, record count, errors |
-| n8n HF workflow | Scheduled call to `/api/ingest/huggingface` |
+| `lib/static-import.ts` | CSV reader + flexible column mapping + insert |
+| `POST /api/ingest/static` | Trigger Kaggle CSV import |
+| `GET /api/ingest/static` | Connector status, dataset path, last run |
+| `npm run ingest:static` | CLI import |
 
-**Primary dataset configuration:**
+**Dataset configuration:**
 
-| Setting | Example value |
-|---------|---------------|
-| `HF_DATASET_ID` | **TBD** — only this dataset may be imported (you will provide the ID) |
-| `HF_DATASET_SPLIT` | `train` |
-| `HF_TOKEN` | Optional; required for gated datasets |
+| Setting | Value |
+|---------|-------|
+| `STATIC_DATASET_PATH` | Path to the Kaggle CSV file or folder (gitignored `data/`) |
+| `STATIC_DATASET_SOURCE` | Fallback `source` when the CSV has no store column (`app_store` \| `play_store`) |
+| `KAGGLE_USERNAME` / `KAGGLE_KEY` | Optional, for automated CLI download |
 
-**Column mapping (example — adjust to actual dataset schema):**
+Dataset: [alexandrakim2201/spotify-dataset](https://www.kaggle.com/datasets/alexandrakim2201/spotify-dataset).
 
-| HF dataset column | `feedback_items` field |
-|-------------------|------------------------|
-| `body` / `text` / `content` | `content` |
-| `author` / `username` | `author` |
-| `created_utc` / `timestamp` | `created_at` |
-| `id` / `comment_id` | `source_id` |
-| — | `source` = `huggingface` |
-| — | `ingestion_pipeline` = `huggingface` |
+**Column mapping (auto-detected, case-insensitive):**
 
-**Deliverables:**
+| Kaggle column candidates | `feedback_items` field |
+|--------------------------|------------------------|
+| `review` / `content` / `text` | `content` |
+| `rating` / `score` / `stars` | `rating` |
+| `title` / `summary` | `title` |
+| `author` / `user` / `username` | `author` |
+| `time_submitted` / `date` / `timestamp` | `created_at` |
+| `id` / `review_id` (else hash) | `source_id` |
+| store/platform column (else `STATIC_DATASET_SOURCE`) | `source` |
+| — | `ingestion_pipeline` = `static_import` |
 
-- [ ] `lib/huggingface.ts` with configurable dataset ID and field mapping
-- [ ] `POST /api/ingest/huggingface` endpoint
-- [ ] Import status tracking in `ingestion_runs` table
-- [ ] n8n scheduled workflow for periodic re-import
+**Deliverables (implemented):**
+
+- [x] `lib/static-import.ts` with flexible column mapping
+- [x] `POST /api/ingest/static` endpoint + `npm run ingest:static`
+- [x] Import status tracking in `ingestion_runs` table
+- [ ] Optional scheduled re-import (refresh of the dataset folder)
 
 ---
 
 ## Phase 1: Data Ingestion
 
-**Goal:** Automate collection from **two pipelines only** — Hugging Face dataset and live web scraping — and normalize into a single schema.
+**Goal:** Collect **Spotify app reviews only** from two pipelines and normalize into a single schema.
 
-> Scraping allowlist: App Store, Play Store, Quora, Twitter/X, community forums. All Groq-extracted content must pass grounding validation. See [guardrails.md](./guardrails.md).
+- **Pipeline 1 (primary) — live scrape:** Spotify reviews from the Apple App Store and Google Play Store. This is the main, continuously refreshed data source that drives the dashboard.
+- **Pipeline 2 (secondary) — Kaggle static import:** historical Spotify reviews loaded in bulk to provide trend history, pattern context, and a larger sample size.
+
+> Spotify-only: structured sources are mapped directly (no LLM). The Groq/HTML extraction path is reserved for any optional future context source and must pass grounding validation. See [guardrails.md](./guardrails.md).
 
 ### Architecture
 
 ```mermaid
 flowchart TB
-    subgraph n8n["n8n Workflows — Pipeline 2"]
-        W1[App Store → Groq → Validate]
-        W2[Play Store → Groq → Validate]
-        W3[Quora → Groq → Validate]
-        W4[Twitter → Groq → Validate]
-        W5[Forums → Groq → Validate]
-        CRON[Schedule Trigger]
+    subgraph p1 [Pipeline1 Primary LiveScrape]
+        AS[App Store reviews]
+        GP[Play Store reviews]
+    end
+    subgraph p2 [Pipeline2 Secondary KaggleStatic]
+        KG[Kaggle CSV historical]
     end
 
-    subgraph HF["Pipeline 1"]
-        W6[POST /api/ingest/huggingface]
-    end
-
-    CRON --> W1 & W2 & W3 & W4 & W5 & W6
-    W1 & W2 & W3 & W4 & W5 --> FETCH[Fetch page / HTML]
-    FETCH --> GROQ[Groq extraction]
-    GROQ --> VAL[Ground against raw HTML]
-    VAL --> TRANS[Transform to Schema]
-    W6 --> TRANS
-    TRANS --> DEDUP[Deduplicate by source_id]
+    AS --> MAP[Map to feedback_items]
+    GP --> MAP
+    KG --> MAP
+    MAP --> DEDUP[Deduplicate by pipeline+source+source_id and content_hash]
     DEDUP --> PG[(PostgreSQL)]
+    PG --> RUNS[ingestion_runs status]
 ```
 
-### Per-Source Workflows
+### Per-Source Mapping
 
-| Platform | Pipeline | `source` tag |
-|----------|----------|--------------|
-| Hugging Face dataset | Pipeline 1 — HF connector | `huggingface` |
-| Apple App Store | Pipeline 2 — live scrape | `app_store` |
-| Google Play Store | Pipeline 2 — live scrape | `play_store` |
-| Quora | Pipeline 2 — live scrape | `quora` |
-| Twitter / X | Pipeline 2 — live scrape | `twitter` |
-| Community forums | Pipeline 2 — live scrape | `forum` |
+| Platform | Pipeline | `source` tag | Method |
+|----------|----------|--------------|--------|
+| Apple App Store | 1 — live scrape (primary) | `app_store` | iTunes RSS JSON, multi-country, pages 1..10 (Apple caps ~500/country) |
+| Google Play Store | 1 — live scrape (primary) | `play_store` | `google-play-scraper`, NEWEST + token pagination, multi-country |
+| Kaggle Spotify dataset | 2 — static import (secondary) | `app_store` / `play_store` | CSV column mapping |
+| Reddit / forums (optional) | live scrape (context) | `forum` | Reddit JSON; Spotify-filtered |
+| Quora / X (optional) | live scrape (context) | `quora` / `twitter` | Groq HTML extract + grounding; skipped if blocked |
 
 ### Ingestion Requirements
 
-- Scheduled runs (e.g., daily or weekly)
-- Incremental ingestion where the source supports it
-- Deduplication on `(source, source_id)`
-- Error handling with retry and logging
-- Source attribution preserved on every record
+- Live scrape runs on demand or scheduled; Kaggle import is a one-off/refresh baseline
+- Deduplication on `(ingestion_pipeline, source, source_id)` + `content_hash`
+- Error handling with per-source isolation and logging
+- Source attribution + `product_name = 'Spotify'` preserved on every record
 
-### Deliverables
+### Volume notes (free-endpoint realities)
 
-- [ ] `lib/groq.ts` — Groq client for structured extraction
-- [ ] `POST /api/scrape/extract` — Groq-powered parsing of fetched web content
-- [ ] `lib/huggingface.ts` — Hugging Face dataset loader with field mapping
-- [ ] `POST /api/ingest/huggingface` — bulk dataset import endpoint
-- [ ] n8n workflow: App Store (fetch → Groq → DB)
-- [ ] n8n workflow: Play Store (fetch → Groq → DB)
-- [ ] n8n workflow: Hugging Face scheduled import
-- [ ] n8n workflow: Quora (fetch → Groq → validate → DB)
-- [ ] n8n workflow: Twitter/X (fetch → Groq → validate → DB)
-- [ ] n8n workflow: community forums (fetch → Groq → validate → DB)
-- [ ] `lib/guardrails/extraction-validator.ts` — reject ungrounded Groq output
-- [ ] Normalization layer mapping all sources to `feedback_items`
-- [ ] `ingestion_runs` table for status logging (counts, errors, last run)
+- **Google Play** reviews are effectively a single global pool — the `country` parameter returns largely the same review IDs, so multi-country fetching collapses on dedup. Realistic unique yield via NEWEST pagination is ~5k before continuation tokens stop. Config: `play_store.countries`, `max_per_country`, `sort`, `throttle_ms`.
+- **Apple App Store** RSS is genuinely per-storefront (each country ~500 max) but is frequently empty/blocked from datacenter IPs — run locally on a residential network for meaningful yield. Config: `app_store.countries`, `pages` (<=10), `throttle_ms`.
+- For tens of thousands of reviews, the **Kaggle static import (Pipeline 2)** is the right lever — a single CSV can hold the full historical corpus. Live scrape keeps the data fresh.
+
+### Deliverables (implemented)
+
+- [x] `lib/groq.ts` — Groq client for structured extraction (HTML path)
+- [x] `POST /api/scrape/extract` — Groq parsing + grounding + grounded insert
+- [x] `lib/static-import.ts` + `POST /api/ingest/static` + `npm run ingest:static` (Pipeline 2)
+- [x] `lib/scrape/` fetchers (App Store, Play Store, Reddit) + orchestrator
+- [x] `POST /api/ingest/live` + `npm run ingest:live` (Pipeline 1)
+- [x] `lib/guardrails/extraction-validator.ts` — reject ungrounded Groq output
+- [x] Normalization layer mapping all sources to `feedback_items`
+- [x] `ingestion_runs` table for status logging (counts, errors, last run)
+- [ ] Optional scheduled automation (n8n or cron) for live scrape
 
 ### Exit Criteria
 
-Thousands of normalized feedback records in PostgreSQL from Hugging Face **and** live-scraped platforms, with no duplicate `(ingestion_pipeline, source, source_id)` pairs and zero ungrounded Groq extractions.
+Normalized Spotify-review records in PostgreSQL from live scrape (primary) plus the Kaggle baseline (secondary), with no duplicate `(ingestion_pipeline, source, source_id)` pairs and zero ungrounded Groq extractions.
 
 ---
 
-## Phase 2: AI Enrichment
+## Phase 2: Enrichment (Groq-free)
 
-**Goal:** Run LLM analysis on every feedback item and persist structured metadata for search, filtering, and reporting.
+**Goal:** Tag every feedback item with dependable metadata for SQL reports — without bulk Groq calls.
 
 ### Architecture
 
 ```mermaid
 flowchart LR
-    PG[(PostgreSQL)] --> Q[Enrichment Queue]
-    Q --> LLM[Groq LLM]
-    LLM --> PARSE[Parse Structured Output]
-    PARSE --> SAVE[Save to enrichment_results]
+    PG[(feedback_items)] --> SIG[Rating + keyword signals]
+    SIG --> SAVE[enrichment_results]
     SAVE --> PG
+    SAVE --> REPORTS[Reports SQL aggregates]
 ```
 
-### Enrichment Pipeline
+- **Sentiment:** derived from star rating when present (1–2 negative, 3 neutral, 4–5 positive; mixed when rating/text conflict). Keyword fallback when no rating.
+- **Themes / pain points / feature requests:** keyword extraction (no LLM).
+- **Groq is not used** in Phase 2. Run `npm run enrich` (optionally `--force` to refresh).
 
-For each `feedback_item`:
+### Deliverables (implemented)
 
-1. Send content to Groq with a structured-output prompt
-2. Extract and validate JSON response
-3. Store results linked to the feedback item
+- [x] Rating-based sentiment + keyword themes (`lib/enrichment.ts`)
+- [x] Batch job `npm run enrich`
+- [x] `enrichment_results` table linked to `feedback_items`
 
-| Field | Type | Example |
-|-------|------|---------|
-| sentiment | enum | positive / negative / neutral |
-| themes | string[] | ["discovery", "recommendations"] |
-| pain_points | string[] | ["Hard to find new artists"] |
-| user_goals | string[] | ["Discover niche genres"] |
-| feature_requests | string[] | ["Better playlist filters"] |
-| enriched_at | timestamp | — |
+---
 
-### Implementation Options
+## Groq usage policy
 
-| Option | When to use |
-|--------|-------------|
-| Batch job (cron / n8n) | Initial backfill of existing records |
-| On-ingest trigger | New items enriched as they arrive |
-| Next.js API background job | Simpler orchestration during development |
-
-### Deliverables
-
-- [ ] Enrichment prompt template with structured JSON output
-- [ ] Batch enrichment job for existing data
-- [ ] `enrichment_results` table linked to `feedback_items`
-- [ ] Re-run / skip logic for already-enriched items
-
-### Exit Criteria
-
-All ingested feedback items have enrichment metadata; sentiment and themes are queryable via SQL.
+| Use Groq | Do not use Groq |
+|----------|-----------------|
+| RAG insight analysis (`/api/query`, Ask tab) on top **12** retrieved reviews | Live scrape / structured import |
+| | Bulk enrichment of all reviews |
+| | Embeddings (local Transformers.js instead) |
+| | HTML page extraction (`/api/scrape/extract` — **cold/optional** only) |
 
 ---
 
@@ -431,23 +490,25 @@ flowchart LR
 
 | Component | Detail |
 |-----------|--------|
-| Embedding model | Groq `nomic-embed-text-v1_5` (via `GROQ_EMBEDDING_MODEL`) |
-| Storage | `embeddings` table with `vector(1536)` column + HNSW/IVFFlat index |
-| Search API | `POST /api/search` — accepts query text, returns top-k items with scores |
+| Embedding model | Local `Xenova/all-MiniLM-L6-v2` via Transformers.js (`LOCAL_EMBEDDING_MODEL`) — **no Groq** |
+| Storage | `embeddings` table with `vector(384)` + HNSW index (migration `004`) |
+| Search API | `POST /api/search` — local query embed + pgvector cosine similarity |
 | Filters | Optional filters on source, date, sentiment (from enrichment) |
+| Batch | `npm run embed` backfills all rows locally |
 
 ### Embedding Strategy
 
-- Embed the **content** field (optionally concatenate themes/pain_points for richer vectors)
-- One embedding per feedback item
+- Embed the **content** field locally (384-dim, mean-pooled, normalized)
+- One embedding per feedback item; first run downloads model to `.cache/transformers`
 - Re-embed only when content changes
 
-### Deliverables
+### Deliverables (implemented)
 
-- [ ] Embedding generation batch job
-- [ ] pgvector index on embeddings table
-- [ ] Semantic search API endpoint
-- [ ] Filter support (source, date range, sentiment)
+- [x] Local embedding generation (`lib/embeddings.ts`, `npm run embed`)
+- [x] pgvector HNSW index on embeddings (384-dim)
+- [x] Semantic search API endpoint (`POST /api/search`)
+- [x] Filter support (source, date range, sentiment)
+- [x] `MIN_RETRIEVAL_SCORE=0.38` default tuned for MiniLM cosine scores
 
 ### Exit Criteria
 
@@ -457,7 +518,7 @@ A natural-language query like *"frustrations with music recommendations"* return
 
 ## Phase 4: RAG Query Interface
 
-**Goal:** Let users ask product questions and receive structured, evidence-backed answers.
+**Goal:** Let users ask product questions and receive structured, evidence-backed answers. **Groq is used only here** — insight analysis on the top `RAG_TOP_K` (12) retrieved reviews after a wide pool (`RAG_RETRIEVE_POOL`=40).
 
 ### Architecture
 
@@ -528,71 +589,71 @@ User can ask *"Why do users struggle to discover new music?"* and receive a full
 
 ---
 
-## Phase 5: Dashboard & Automated Insights
+## Phase 5: Main Dashboard (primary landing)
 
-**Goal:** Provide at-a-glance visibility into feedback volume, sentiment, themes, and emerging patterns—beyond ad-hoc queries.
+**Goal:** A comprehensive, data-backed Spotify review analysis report **plus** a RAG bot, served at `/dashboard` as the app's main landing page. All numbers are computed in SQL; the LLM never fabricates metrics. Charts use **Recharts**. Full visual spec: [UI.md](../UI.md).
 
 ### Architecture
 
 ```mermaid
-flowchart TB
-    PG[(PostgreSQL)] --> AGG[Aggregation Queries]
-    AGG --> API[Dashboard API Routes]
-    API --> UI[Next.js Dashboard]
-
-    PG --> INS[Insight Engine]
-    INS --> LLM[Groq LLM]
-    LLM --> INS
-    INS --> API
+flowchart LR
+    DB[(PostgreSQL)] --> Agg[SQL aggregations]
+    Agg --> API["/api/dashboard/* and /api/reports/*"]
+    API --> UI[Dashboard charts + KPIs]
+    DB --> Runs[ingestion_runs] --> Status[Pipeline status bar]
+    DB --> RAGsvc["/api/query RAG"] --> Bot[RAG panel]
 ```
 
-### Dashboard Views
+### Dashboard sections
 
-| View | Data |
-|------|------|
-| **Overview** | Total feedback count, sentiment distribution, top themes |
-| **Trends** | Sentiment and theme frequency over time |
-| **Pain points** | Most common pain points from enrichment |
-| **Feature requests** | Ranked feature requests by frequency |
-| **Search** | Semantic search with filters (source, date, sentiment) |
+1. **Pipeline status bar** — per-source health (App Store, Play Store = Pipeline 1 primary; Kaggle = Pipeline 2 historical): online/offline/stale dot, relative "last updated", last inserted count. Driven by latest `ingestion_runs`.
+2. **Executive summary** — KPI StatCards with period deltas (total reviews + live/historical split, average rating, sentiment %, volume) and a **dynamic primary chart** (review volume / avg-rating trendline; bar fallback when sparse) with range toggles (7d/30d/90d/All). Optional grounded one-line headline.
+3. **Comprehensive review metrics (Recharts):** rating distribution (bar), sentiment over time (stacked area/line), source mix (donut), top themes (horizontal bar), pain points and feature requests (ranked + bar with sample quotes), volume trend, rating trend, and **live vs Kaggle-historical** comparison to show trend shifts.
+4. **RAG bot** — grounded Ask panel reusing `/api/query` (structured answer with verbatim quotes + source attribution; "insufficient evidence" state when guardrails block).
 
-### Insight Engine
+### Insight Engine (optional, Phase 5-full)
 
-Periodic or on-demand job that:
+On-demand/periodic job that clusters by theme, flags rising complaints and feature requests, and writes grounded opportunity summaries — phrasing from Groq, counts from SQL.
 
-- Clusters feedback by theme
-- Identifies recurring complaints and rising feature requests
-- Flags emerging themes (frequency increase over time)
-- Generates opportunity area summaries
+**Deliverables (Phase 5-full):**
+
+- [x] `lib/insights/stats.ts` — SQL snapshot + rising pain points / feature requests (current vs prior period)
+- [x] `lib/insights/engine.ts` — Groq narrative on pre-computed stats (SQL fallback when Groq unavailable)
+- [x] `POST /api/insights` — on-demand generation per section
+- [x] `InsightPanel` on dashboard + all report pages ("Generate insights" button)
 
 ### Deliverables
 
-- [ ] Overview dashboard page
-- [ ] Semantic search page with filters
-- [ ] Theme and pain-point visualization
-- [ ] Automated insight generation job
-- [ ] Insights panel surfacing top opportunities
+- [x] `/dashboard` page set as main landing (redirect from `/`)
+- [x] Pipeline status bar from `ingestion_runs`
+- [x] Executive summary KPIs + dynamic Recharts chart with range toggles
+- [x] Comprehensive metric charts (rating dist, sentiment-over-time, source mix, themes, pain points, feature requests, live-vs-historical)
+- [x] `/api/dashboard/*` aggregation endpoints
+- [x] Embedded RAG bot panel
+- [x] Spotify-dark theme + components per [UI.md](../UI.md); add `recharts` dependency
 
 ### Exit Criteria
 
-Dashboard shows live stats from ingested data; insight engine surfaces at least recurring complaints, feature requests, and emerging themes without a manual query.
+Opening `/dashboard` shows pipeline status with last-updated, an executive summary with a live trend chart, the full suite of Spotify-review metrics with visual aids, and a working grounded RAG bot — all Spotify-only and styled per UI.md.
 
 ---
 
-## Phase 6: Extensions (Future)
+## Phase 6: Extensions
 
-**Goal:** Expand sources, add reporting, and harden the platform for production use.
+**Goal:** Hybrid search and review persona segments. (PDF export and trend alerts excluded per project scope.)
 
-### Planned Extensions
+### Deliverables
 
-| Extension | Description |
-|-----------|-------------|
-| Community forums | Additional n8n workflows for forum scraping |
-| Social media | API-based ingestion where available |
-| Downloadable reports | PDF/Markdown export of insights and query results |
-| Hybrid search | Combine keyword (PostgreSQL full-text) + vector search |
-| Trend alerts | Notify when a theme's frequency crosses a threshold |
-| User segments | Cluster users by behavior or persona tags |
+- [x] `005_phase6_hybrid_search.sql` — GIN tsvector index on review content
+- [x] Hybrid search — full-text + semantic with reciprocal rank fusion (`lib/search.ts`)
+- [x] Explore UI — Hybrid / Semantic / Keyword mode pills
+- [x] Review segments — persona groupings from enrichment (`/reports/segments`, `GET /api/reports/segments`)
+
+### Out of scope (this project)
+
+- Downloadable reports (PDF/Markdown)
+- Trend alerts / notifications
+- Community forums / social media ingestion (future)
 
 ### Architecture Addition
 
@@ -610,42 +671,27 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    P0[Phase 0<br>Foundation] --> P1[Phase 1<br>Ingestion]
-    P1 --> P2[Phase 2<br>Enrichment]
-    P2 --> P3[Phase 3<br>Vector Search]
-    P3 --> P4[Phase 4<br>RAG Interface]
-    P2 --> P5[Phase 5<br>Dashboard]
-    P3 --> P5
-    P4 --> P5
-    P5 --> P6[Phase 6<br>Extensions]
+    P0[Phase0] --> P1[Phase1]
+    P1 --> P2[Phase2]
+    P2 --> P5lite[Phase5-lite Reports]
+    P2 --> P3[Phase3]
+    P3 --> P4[Phase4 RAG]
+    P3 --> P5full[Phase5-full]
+    P5lite --> P6[Phase6]
+    P4 --> P6
 ```
 
-Phases 4 and 5 can partially overlap once Phase 3 is complete: dashboard views that rely on enrichment data (Phase 2) can be built in parallel with the RAG interface.
-
----
-
-## Technology Mapping by Phase
-
-| Phase | Technologies |
-|-------|-------------|
-| 0 | Next.js, TypeScript, PostgreSQL, pgvector, Groq + HF env config |
-| 1 | n8n, **Groq API** (web extraction), **Hugging Face Hub** (dataset import) |
-| 2 | Groq LLM, batch jobs / n8n |
-| 3 | Groq Embeddings, pgvector HNSW index |
-| 4 | RAG pipeline, Groq LLM, Next.js API + UI |
-| 5 | Next.js dashboard, chart library, aggregation SQL |
-| 6 | Additional n8n workflows, report generation library |
+Phase 5-lite can start immediately after Phase 2 — no vector search required.
 
 ---
 
 ## Recommended Implementation Order
 
-For a graduation project timeline, prioritize phases **0 → 4** as the core MVP:
+For a graduation project timeline, prioritize **analysis-first**:
 
-1. **Phase 0–1** — Get real data flowing (demonstrates ingestion)
-2. **Phase 2–3** — Make data searchable and intelligent (demonstrates AI pipeline)
-3. **Phase 4** — Deliver the headline feature: natural-language Q&A with evidence (demonstrates RAG)
-4. **Phase 5** — Add dashboard polish for presentation and evaluation
-5. **Phase 6** — Stretch goals if time permits
+1. **Phase 0–2** — Foundation, ingestion, enrichment
+2. **Phase 5-lite** — Primary demo: in-app reports
+3. **Phase 3–4** — Explore + RAG Ask tab
+4. **Phase 5-full / 6** — Polish and stretch goals
 
-The MVP (Phases 0–4) satisfies the [success criteria](./problemstatement.md#success-criteria): a product team member asks one question and receives a synthesized, evidence-backed answer from thousands of reviews.
+The MVP satisfies [success criteria](./problemstatement.md#success-criteria): detailed reports (primary) plus evidence-backed Q&A (secondary).

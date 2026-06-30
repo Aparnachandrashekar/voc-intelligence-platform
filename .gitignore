@@ -5,6 +5,7 @@ node_modules/
 
 # next.js
 .next/
+.next-build/
 out/
 
 # env
@@ -27,3 +28,10 @@ next-env.d.ts
 # docker
 postgres_data/
 n8n_data/
+
+# local datasets (Kaggle CSVs, downloads)
+data/
+*.zip
+
+# Transformers.js model cache
+.cache/

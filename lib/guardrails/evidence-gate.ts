@@ -1,5 +1,9 @@
 import { getEnv } from "@/lib/env";
+import {
+  itemQualifiesForEvidence,
+} from "@/lib/guardrails/retrieval-score";
 import type { RetrievedFeedbackItem } from "@/lib/types/feedback";
+import type { RagResponse } from "@/lib/types/rag";
 
 export interface EvidenceGateResult {
   allowed: boolean;
@@ -24,8 +28,8 @@ export function evaluateEvidenceGate(
   const minScore = env.MIN_RETRIEVAL_SCORE;
   const minItems = env.MIN_EVIDENCE_ITEMS;
 
-  const qualifying = items.filter(
-    (item) => (item.similarity_score ?? 0) >= minScore
+  const qualifying = items.filter((item) =>
+    itemQualifiesForEvidence(item, minScore)
   );
 
   const maxSimilarity =
@@ -56,20 +60,21 @@ export function evaluateEvidenceGate(
   };
 }
 
-export function insufficientEvidenceResponse(meta: EvidenceGateResult["meta"]) {
+export function insufficientEvidenceResponse(meta: EvidenceGateResult["meta"]): RagResponse {
   return {
-    status: "insufficient_evidence" as const,
+    status: "insufficient_evidence",
     executive_summary:
       "Not enough matching feedback in the database to answer this question confidently.",
-    key_findings: [] as string[],
-    supporting_quotes: [] as unknown[],
-    theme_breakdown: [] as unknown[],
-    source_attribution: [] as unknown[],
-    product_recommendations: [] as string[],
+    detailed_analysis: "",
+    key_findings: [],
+    supporting_quotes: [],
+    theme_breakdown: [],
+    source_attribution: [],
+    product_recommendations: [],
     meta: {
       ...meta,
       message:
-        "All answers must come from ingested App Store, Play Store, Quora, Twitter, forum, or Hugging Face data only.",
+        "All answers must come from ingested App Store, Play Store, Reddit, or historical archive data only.",
     },
   };
 }

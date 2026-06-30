@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS feedback_items (
   ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   fetched_at TIMESTAMPTZ,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  content_hash TEXT GENERATED ALWAYS AS (encode(sha256(convert_to(content, 'UTF8')), 'hex')) STORED,
+  content_hash TEXT GENERATED ALWAYS AS (md5(content)) STORED,
   CONSTRAINT feedback_items_pipeline_source_source_id_unique
     UNIQUE (ingestion_pipeline, source, source_id),
   CONSTRAINT feedback_items_live_scrape_requires_url

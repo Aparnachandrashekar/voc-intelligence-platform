@@ -1,0 +1,75 @@
+# Strict Cursor ignore — keeps agent context on source code, not caches or bulk data.
+# Syntax: same as .gitignore. Re-open a file with @ if you need an ignored path.
+
+# --- Dependencies & build output (~1GB) ---
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+.turbo/
+.pnp
+.pnp.js
+
+# --- Secrets (never index) ---
+.env
+.env.*
+.env.local
+
+# --- Runtime caches ---
+.cache/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- Docker / local DB volumes ---
+postgres_data/
+n8n_data/
+
+# --- Datasets & bulk imports ---
+data/
+documents/
+*.csv
+*.tsv
+*.parquet
+*.zip
+*.gz
+*.jsonl
+
+# --- Lock files (versions live in package.json) ---
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# --- Logs & debug ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- OS / editor noise ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# --- Binary & media (not useful for code reasoning) ---
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.pdf
+*.mp4
+*.woff
+*.woff2
+*.ttf
+
+# --- Large reference docs (fetch on demand via @ or grep) ---
+docs/edge-cases.md
+learning_log.md
+
+# --- Optional generated SQL backups ---
+*.sql.backup

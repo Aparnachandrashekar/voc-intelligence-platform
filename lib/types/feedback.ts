@@ -1,4 +1,10 @@
-export const INGESTION_PIPELINES = ["huggingface", "live_scrape"] as const;
+// `static_import` and `huggingface` are legacy — kept for existing DB rows only.
+// New ingestion uses `live_scrape` (App Store + Play Store).
+export const INGESTION_PIPELINES = [
+  "static_import",
+  "live_scrape",
+  "huggingface",
+] as const;
 export type IngestionPipeline = (typeof INGESTION_PIPELINES)[number];
 
 export const FEEDBACK_SOURCES = [
@@ -20,6 +26,10 @@ export const LIVE_SCRAPE_SOURCES = [
 ] as const;
 export type LiveScrapeSource = (typeof LIVE_SCRAPE_SOURCES)[number];
 
+// Legacy — Kaggle static import removed; type kept for old rows.
+export const STATIC_IMPORT_SOURCES = ["app_store", "play_store"] as const;
+export type StaticImportSource = (typeof STATIC_IMPORT_SOURCES)[number];
+
 export interface FeedbackItem {
   id: string;
   ingestion_pipeline: IngestionPipeline;
@@ -27,6 +37,7 @@ export interface FeedbackItem {
   source_id: string;
   source_url: string | null;
   product_name: string;
+  title: string | null;
   content: string;
   rating: number | null;
   author: string | null;
@@ -42,6 +53,7 @@ export interface InsertFeedbackItemInput {
   source_id: string;
   source_url?: string | null;
   product_name?: string;
+  title?: string | null;
   content: string;
   rating?: number | null;
   author?: string | null;
@@ -52,4 +64,6 @@ export interface InsertFeedbackItemInput {
 
 export interface RetrievedFeedbackItem extends FeedbackItem {
   similarity_score?: number;
+  keyword_score?: number;
+  hybrid_score?: number;
 }

@@ -23,13 +23,11 @@ flowchart TB
     subgraph AllowedPlatforms["Allowed scrape targets"]
         AS[Apple App Store]
         GP[Google Play Store]
-        QU[Quora]
-        TW[Twitter / X]
-        FF[Community forums]
+        RD[Reddit]
     end
 
     HF --> HFLOAD --> DB[(PostgreSQL)]
-    AS & GP & QU & TW & FF --> FETCH --> GROQ --> DB
+    AS & GP & RD --> FETCH --> GROQ --> DB
 
     DB --> ENR[Enrichment]
     ENR --> VEC[Embeddings]
@@ -47,9 +45,7 @@ flowchart TB
 |----------|----------------|-------|
 | Apple App Store | `app_store` | Reviews only |
 | Google Play Store | `play_store` | Reviews only |
-| Quora | `quora` | Questions, answers, comments |
-| Twitter / X | `twitter` | Public posts/replies where accessible |
-| Community forums | `forum` | e.g. Reddit threads, product forums, discussion boards |
+| Reddit | `forum` | r/spotify and other allowlisted Reddit JSON endpoints |
 
 **Blocked at ingestion:** Any URL or platform not in the allowlist above is rejected before fetch. Any record without a valid `ingestion_pipeline` (`huggingface` \| `live_scrape`) is rejected at insert.
 
@@ -77,7 +73,7 @@ Applies to Pipeline 2. Hugging Face rows are trusted from the dataset but still 
 1. **Store raw fetch before Groq** — Save `metadata.raw_html` or `metadata.raw_text` for every scraped URL.
 2. **Extract, don’t generate** — Groq prompt must state: *“Return only feedback verbatim or near-verbatim from the provided page. Do not invent items.”*
 3. **Grounding check** — Each extracted `content` string must match the raw page (substring or fuzzy similarity ≥ 0.85). Items failing validation are **discarded**, not inserted.
-4. **Allowlist URLs** — Only fetch domains/patterns configured in `SCRAPE_ALLOWLIST` (App Store, Play Store, Quora, Twitter/X, approved forum domains).
+4. **Allowlist URLs** — Only fetch domains/patterns configured in `SCRAPE_ALLOWLIST` (App Store, Play Store, Reddit).
 5. **Provenance required** — Every row must have: `ingestion_pipeline`, `source`, `source_id`, `source_url`, `fetched_at`.
 
 ### On failure
@@ -120,7 +116,7 @@ Applies to Pipeline 1.
 2. **Minimum similarity threshold** — Default `MIN_RETRIEVAL_SCORE = 0.72` (tune empirically). Results below threshold are excluded.
 3. **Minimum evidence count** — RAG requires ≥ `MIN_EVIDENCE_ITEMS = 3` retrieved items above threshold, or the query is refused.
 4. **Deduplicate by `content_hash`** — Avoid redundant context dominating the answer.
-5. **Source filter optional** — User may filter to `app_store`, `play_store`, `quora`, `twitter`, `forum`, or `huggingface` only.
+5. **Source filter optional** — User may filter to `app_store`, `play_store`, or `forum` (Reddit) only.
 
 ---
 
@@ -172,7 +168,7 @@ When guardrails block generation:
   "product_recommendations": [],
   "meta": {
     "retrieved_count": 0,
-    "message": "All answers must come from ingested App Store, Play Store, Quora, Twitter, forum, or Hugging Face data only."
+    "message": "All answers must come from ingested App Store, Play Store, Reddit, or historical archive data only."
   }
 }
 ```
@@ -196,7 +192,7 @@ When guardrails block generation:
 |----------|---------|---------|
 | `HF_DATASET_ID` | **TBD** — only allowed HF dataset | `(to be provided)` |
 | `HF_DATASET_SPLIT` | Dataset split | `train` |
-| `SCRAPE_ALLOWLIST` | Comma-separated domains/patterns | `apps.apple.com,play.google.com,quora.com,twitter.com,x.com` |
+| `SCRAPE_ALLOWLIST` | Comma-separated domains/patterns | `apps.apple.com,play.google.com,reddit.com` |
 | `MIN_RETRIEVAL_SCORE` | Similarity floor for RAG | `0.72` |
 | `MIN_EVIDENCE_ITEMS` | Min retrieved items to answer | `3` |
 | `QUOTE_MATCH_THRESHOLD` | Fuzzy match for quote validation | `0.90` |

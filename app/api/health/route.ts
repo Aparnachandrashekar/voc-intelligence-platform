@@ -3,29 +3,22 @@ import {
   checkDatabaseConnection,
   checkPgvectorExtension,
   countFeedbackItems,
+  getLatestIngestionRun,
 } from "@/lib/db";
 import { isGroqConfigured, testGroqConnection } from "@/lib/groq";
-import {
-  getHuggingFaceConfig,
-  validateHuggingFaceConnection,
-} from "@/lib/huggingface";
+import { getEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const env = getEnv();
   const checks = {
     database: { ok: false, feedback_count: 0 },
     pgvector: { ok: false },
     groq: { configured: false, ok: false, model: null as string | null },
-    huggingface: {
-      configured: false,
-      ok: false,
-      datasetId: null as string | null,
-      message: "",
-    },
-    n8n: {
-      webhook_base: "http://localhost:5678",
-      app_webhook_target: "http://host.docker.internal:3000/api",
+    live_scrape: {
+      allowlist: env.SCRAPE_ALLOWLIST.split(",").map((d) => d.trim()),
+      latest_run: null as unknown,
     },
   };
 
@@ -39,7 +32,7 @@ export async function GET() {
     return NextResponse.json(
       {
         status: "degraded",
-        phase: 0,
+        phase: 1,
         checks,
         error: error instanceof Error ? error.message : "Database unreachable",
       },
@@ -53,25 +46,15 @@ export async function GET() {
       const result = await testGroqConnection();
       checks.groq.ok = result.ok;
       checks.groq.model = result.model;
-    } catch (error) {
+    } catch {
       checks.groq.ok = false;
     }
   }
 
-  const hfConfig = getHuggingFaceConfig();
-  checks.huggingface.configured = hfConfig.configured;
-  checks.huggingface.datasetId = hfConfig.datasetId;
-  checks.huggingface.message = hfConfig.message;
-
-  if (hfConfig.configured) {
-    try {
-      const hf = await validateHuggingFaceConnection();
-      checks.huggingface.ok = hf.ok;
-      checks.huggingface.message = hf.message;
-    } catch {
-      checks.huggingface.ok = false;
-      checks.huggingface.message = "Failed to reach Hugging Face Hub.";
-    }
+  if (checks.database.ok) {
+    checks.live_scrape.latest_run = await getLatestIngestionRun(
+      "live_scrape"
+    ).catch(() => null);
   }
 
   const allCoreOk = checks.database.ok && checks.pgvector.ok;
@@ -79,7 +62,7 @@ export async function GET() {
   return NextResponse.json(
     {
       status: allCoreOk ? "ok" : "degraded",
-      phase: 0,
+      phase: 1,
       timestamp: new Date().toISOString(),
       checks,
     },
