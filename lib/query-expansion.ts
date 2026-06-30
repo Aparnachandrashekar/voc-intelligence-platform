@@ -31,7 +31,7 @@ const CONCEPT_CLUSTERS: ConceptCluster[] = [
   {
     id: "repetition",
     triggers:
-      /\b(repeat|repetitive|repeating|same songs?|same music|same tracks?|over and over|again and again|keep playing|plays the same|stale|bored|boring|listening habits?|listen to the same|no variety|lack of variety)\b/i,
+      /\b(repeat|repetitive|repeating|same songs?|same music|same tracks?|over and over|again and again|keep playing|plays the same|stale|bored|boring|listening habits?|listen to the same|no variety|lack of variety|frustration|boredom|disappointment|frustrated|disappointed)\b/i,
     concepts: [
       "algorithm quality",
       "music recommendation trust",
@@ -48,6 +48,8 @@ const CONCEPT_CLUSTERS: ConceptCluster[] = [
       "algorithm",
       "recommendation",
       "recommend",
+      "recommendations",
+      "repetitive",
       "suggest",
       "discover",
       "personalization",
@@ -56,10 +58,51 @@ const CONCEPT_CLUSTERS: ConceptCluster[] = [
       "variety",
       "stale",
       "bored",
+      "frustrated",
+      "frustration",
+      "disappointed",
+      "disappointment",
+      "boredom",
     ],
     themes: ["discovery", "recommendations", "playback"],
     contentPattern:
-      "(repeat|same song|same music|repetitive|algorithm|recommend|suggest|discover|personaliz|radio|variety|stale|bored|listening habit|autoplay)",
+      "(repeat|same song|same music|repetitive|algorithm|recommend|suggest|discover|personaliz|radio|variety|stale|bored|listening habit|autoplay|frustrat|disappoint)",
+  },
+  {
+    id: "mood_vibe",
+    triggers:
+      /\b(mood|vibe|feeling|energy|atmosphere|wrong music|wrong song|doesn't fit|not fit|context|activity|workout|study|relax|calm|chill)\b/i,
+    concepts: [
+      "recommendation mood mismatch",
+      "wrong vibe for activity",
+      "playlist doesn't match moment",
+      "algorithm suggests wrong energy",
+      "music doesn't fit context",
+      "recommendations feel off",
+    ],
+    ftsTerms: [
+      "mood",
+      "vibe",
+      "feeling",
+      "energy",
+      "wrong",
+      "fit",
+      "match",
+      "recommend",
+      "suggest",
+      "algorithm",
+      "playlist",
+      "discover",
+      "shuffle",
+      "for you",
+      "interrupt",
+      "calm",
+      "chill",
+      "workout",
+    ],
+    themes: ["discovery", "recommendations", "playback"],
+    contentPattern:
+      "(mood|vibe|feeling|energy|wrong|fit|match|recommend|suggest|algorithm|playlist|discover|shuffle|interrupt|calm|chill|workout|study)",
   },
   {
     id: "algorithm",
@@ -202,9 +245,12 @@ export function expandQuery(question: string): QueryExpansion {
 
 /** Build a websearch-style OR query for Postgres full-text search. */
 export function buildFtsOrQuery(expansion: QueryExpansion): string {
+  if (expansion.ftsTerms.length > 0) {
+    return uniqueStrings(expansion.ftsTerms).slice(0, 16).join(" OR ");
+  }
+
   const terms = uniqueStrings([
     ...expansion.original.split(/\s+/).filter((w) => w.length > 3),
-    ...expansion.ftsTerms,
   ]).slice(0, 16);
 
   if (terms.length === 0) return expansion.original;

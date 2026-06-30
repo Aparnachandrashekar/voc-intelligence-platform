@@ -26,10 +26,17 @@ export const INSIGHTS_SCOPE_CAPTION =
 export const ANALYZED_REVIEW_LABEL = "AI-analyzed reviews";
 
 export function formatRagMethodologyCaption(meta: {
+  corpus_aggregation?: boolean;
+  total_analyzed?: number;
+  illustrative_quote_count?: number;
   retrieval_pool_limit?: number;
   retrieval_sample_size?: number;
   analysis_context_size?: number;
 }): string {
+  if (meta.corpus_aggregation && meta.total_analyzed) {
+    const quotes = meta.illustrative_quote_count ?? 0;
+    return `Counts and percentages come from all ${meta.total_analyzed.toLocaleString()} AI-analyzed reviews in the corpus (SQL aggregation over stored tags). Illustrative quotes (${quotes}) are representative examples per theme — not the basis for the percentages.`;
+  }
   const pool = meta.retrieval_pool_limit ?? 40;
   const sample = meta.retrieval_sample_size ?? 0;
   const context = meta.analysis_context_size ?? 12;

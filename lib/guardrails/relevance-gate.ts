@@ -1,4 +1,5 @@
 import { getEnv } from "@/lib/env";
+import { isConceptualMetaQuestion, isConceptualOnTopic } from "@/lib/retrieval/intent-alignment";
 import type { RetrievedFeedbackItem } from "@/lib/types/feedback";
 
 /** Products/services outside the Spotify review corpus. */
@@ -51,7 +52,7 @@ function cosineScores(items: RetrievedFeedbackItem[]): number[] {
 /** Block answers when retrieval similarity is too weak (likely off-topic). */
 export function evaluateRetrievalRelevance(
   items: RetrievedFeedbackItem[],
-  _question: string
+  question: string
 ): RetrievalRelevanceResult {
   const env = getEnv();
   const minItems = env.MIN_EVIDENCE_ITEMS;
@@ -82,6 +83,19 @@ export function evaluateRetrievalRelevance(
       max_similarity: null,
       avg_top_similarity: null,
     };
+  }
+
+  if (isConceptualMetaQuestion(question)) {
+    const conceptualCount = items.filter((item) =>
+      isConceptualOnTopic(question, item.content)
+    ).length;
+    if (conceptualCount >= minItems) {
+      return {
+        allowed: true,
+        max_similarity: maxCosine,
+        avg_top_similarity: avgCosine,
+      };
+    }
   }
 
   if (maxCosine < minMax || avgCosine < minAvg) {

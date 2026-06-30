@@ -1,16 +1,7 @@
 import { getPool } from "@/lib/db";
 import { getGroqClient, isGroqConfigured } from "@/lib/groq";
 import { getEnv } from "@/lib/env";
-import { retrieveForQuestion, classifyRetrievalSentimentMode } from "@/lib/search";
-import { detectSegmentRetrievalIntent } from "@/lib/retrieval/segment-intent";
-import {
-  evaluateEvidenceGate,
-  insufficientEvidenceResponse,
-} from "@/lib/guardrails/evidence-gate";
-import {
-  evaluateQuestionScope,
-  evaluateRetrievalRelevance,
-} from "@/lib/guardrails/relevance-gate";
+import { evaluateQuestionScope } from "@/lib/guardrails/relevance-gate";
 import { validateAllQuotes } from "@/lib/guardrails/quote-validator";
 import { CLOSED_WORLD_RAG_SYSTEM_PROMPT } from "@/lib/guardrails/prompts";
 import {
@@ -19,20 +10,19 @@ import {
   filterInsightBullets,
   parseDetailedBullets,
 } from "@/lib/rag-synthesis";
-import {
-  buildQuoteBackedFindings,
-  findingsToRagFields,
-  reconcileGroqFindings,
-} from "@/lib/quote-backed-findings";
+import { findingsToRagFields } from "@/lib/quote-backed-findings";
 import { UI_FILTER_SOURCES } from "@/lib/sources/ui-sources";
 import {
-  computeSampleSentiment,
-  computeVerifiedStats,
-  formatVerifiedStatsBlock,
-  type SampleSentiment,
-  type VerifiedStat,
-} from "@/lib/rag-stats";
-import type { RetrievedFeedbackItem } from "@/lib/types/feedback";
+  buildCorpusAnswerContext,
+  buildCorpusDetailedAnalysis,
+  buildCorpusFindings,
+  computeSourceAttributionFromQuotes,
+  corpusBucketsToThemeBreakdown,
+  formatCorpusStatsBlock,
+  formatIllustrativeQuotesBlock,
+  type CorpusAnswerContext,
+} from "@/lib/rag-corpus-aggregate";
+import type { QuoteBackedFinding } from "@/lib/quote-backed-findings";
 import type { RagResponse } from "@/lib/types/rag";
 import type { ReportFilters } from "@/lib/types/reports";
 
@@ -52,101 +42,11 @@ function scopeRefusal(reason: string, meta: Record<string, unknown>): RagRespons
   };
 }
 
-function computeAttribution(
-  items: RetrievedFeedbackItem[],
-  enrichment: Map<string, Record<string, unknown>>
-) {
-  const sourceMap = new Map<string, number>();
-  const themeSentiment = new Map<
-    string,
-    { count: number; sentiments: Record<string, number> }
-  >();
-
-  for (const item of items) {
-    sourceMap.set(item.source, (sourceMap.get(item.source) ?? 0) + 1);
-    const e = enrichment.get(item.id);
-    const themes = (e?.themes as string[] | undefined) ?? [];
-    const sentiment = (e?.sentiment as string | undefined) ?? "neutral";
-    for (const theme of themes) {
-      if (!theme) continue;
-      const entry = themeSentiment.get(theme) ?? {
-        count: 0,
-        sentiments: {},
-      };
-      entry.count++;
-      entry.sentiments[sentiment] = (entry.sentiments[sentiment] ?? 0) + 1;
-      themeSentiment.set(theme, entry);
-    }
-  }
-
-  return {
-    source_attribution: [...sourceMap.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([source, count]) => ({ source, count })),
-    theme_breakdown: [...themeSentiment.entries()]
-      .sort((a, b) => b[1].count - a[1].count)
-      .map(([theme, v]) => {
-        const topSentiment = Object.entries(v.sentiments).sort(
-          (a, b) => b[1] - a[1]
-        )[0]?.[0];
-        return {
-          theme,
-          count: v.count,
-          sentiment: topSentiment ?? "mixed",
-        };
-      }),
-  };
-}
-
 function filterSourceAttribution(
   sources: RagResponse["source_attribution"]
 ): RagResponse["source_attribution"] {
   const allowed = new Set<string>(UI_FILTER_SOURCES);
   return sources.filter((s) => allowed.has(s.source));
-}
-
-async function loadEnrichmentForItems(ids: string[]) {
-  if (ids.length === 0) return new Map<string, Record<string, unknown>>();
-  const result = await getPool().query(
-    `SELECT e.feedback_item_id, e.sentiment, e.themes, e.pain_points, e.feature_requests,
-            emb.persona_segment
-     FROM enrichment_results e
-     LEFT JOIN embeddings emb ON emb.feedback_item_id = e.feedback_item_id
-     WHERE e.feedback_item_id = ANY($1)`,
-    [ids]
-  );
-  const map = new Map<string, Record<string, unknown>>();
-  for (const row of result.rows) {
-    map.set(row.feedback_item_id, row);
-  }
-  return map;
-}
-
-function attachEnrichment(
-  items: RetrievedFeedbackItem[],
-  enrichment: Map<string, Record<string, unknown>>
-) {
-  for (const item of items) {
-    const e = enrichment.get(item.id);
-    if (e) {
-      item.metadata = { ...item.metadata, ...e };
-      if (e.persona_segment) {
-        item.metadata.persona_segment = e.persona_segment;
-      }
-    }
-  }
-}
-
-function buildContextBlock(
-  items: RetrievedFeedbackItem[],
-  enrichment: Map<string, Record<string, unknown>>
-): string {
-  return items
-    .map((item, i) => {
-      const e = enrichment.get(item.id);
-      return `[${i + 1}] id=${item.id} source=${item.source} sentiment=${e?.sentiment ?? "unknown"} segment=${e?.persona_segment ?? item.metadata?.persona_segment ?? "unknown"} themes=${JSON.stringify(e?.themes ?? [])}\n${item.content.slice(0, 400)}`;
-    })
-    .join("\n\n---\n\n");
 }
 
 function parseGroqResponse(raw: string) {
@@ -175,126 +75,180 @@ function parseGroqResponse(raw: string) {
   }
 }
 
+function summaryOptions(ctx: CorpusAnswerContext) {
+  return {
+    total_analyzed: ctx.total_analyzed,
+    bucketStats: ctx.buckets,
+  };
+}
+
+function buildCorpusResearchSections(
+  ctx: CorpusAnswerContext,
+  question: string
+): RagResponse["research_sections"] {
+  const sections = buildResearchSections(
+    [],
+    new Map(),
+    ctx.buckets.map((b) => ({
+      topic: b.id,
+      label: b.label,
+      matching_reviews: b.count,
+      total_reviews: ctx.total_analyzed,
+      enriched_total: ctx.total_analyzed,
+      pct_of_enriched: b.pct,
+    })),
+    {
+      positive_pct: 0,
+      negative_pct: 0,
+      neutral_pct: 0,
+      positive: 0,
+      negative: 0,
+      neutral: 0,
+      mixed: 0,
+    },
+    ctx.total_analyzed
+  );
+
+  return [
+    {
+      title: "Corpus coverage",
+      body: formatCorpusStatsBlock(ctx),
+    },
+    ...(sections ?? []),
+  ];
+}
+
+function buildHeuristicCorpusResponse(
+  question: string,
+  ctx: CorpusAnswerContext,
+  meta: Record<string, unknown>
+): RagResponse {
+  const findings = buildCorpusFindings(ctx) as QuoteBackedFinding[];
+  const opts = summaryOptions(ctx);
+  const fields = findingsToRagFields(findings, question, opts);
+  const theme_breakdown = corpusBucketsToThemeBreakdown(ctx.buckets);
+  const source_attribution = filterSourceAttribution(
+    computeSourceAttributionFromQuotes(ctx)
+  );
+
+  if (findings.length === 0 && ctx.buckets.length === 0) {
+    return {
+      status: "insufficient_evidence",
+      executive_summary:
+        "Not enough tagged reviews matched this question in the analyzed corpus.",
+      detailed_analysis: "",
+      key_findings: [],
+      supporting_quotes: [],
+      theme_breakdown,
+      source_attribution,
+      product_recommendations: [],
+      meta,
+    };
+  }
+
+  return {
+    status: "completed",
+    executive_summary: fields.executive_summary,
+    detailed_analysis:
+      fields.detailed_analysis || buildCorpusDetailedAnalysis(ctx),
+    research_summary: fields.research_summary,
+    research_sections: buildCorpusResearchSections(ctx, question),
+    key_findings: [],
+    findings: fields.findings,
+    supporting_quotes: fields.supporting_quotes,
+    theme_breakdown,
+    source_attribution,
+    product_recommendations: [],
+    meta,
+  };
+}
+
+/**
+ * Answer a user question from corpus-wide tag aggregation (Part A),
+ * illustrative quotes per theme (Part B), and an optional single Groq summary (Part C).
+ */
 export async function answerQuestion(
   question: string,
   filters: ReportFilters = {},
-  options: { excludeIds?: string[] } = {}
+  _options: { excludeIds?: string[] } = {}
 ): Promise<RagResponse> {
-  const env = getEnv();
-  const poolLimit = env.RAG_RETRIEVE_POOL;
-  const topK = env.RAG_TOP_K;
-
   const scope = evaluateQuestionScope(question);
   if (!scope.allowed) {
-    const response = scopeRefusal(scope.reason!, {
-      refusal: "out_of_scope",
-    });
+    const response = scopeRefusal(scope.reason!, { refusal: "out_of_scope" });
     await logQuerySession(question, response, "insufficient_evidence", 0);
     return response;
   }
 
-  let retrieved: RetrievedFeedbackItem[];
+  let ctx: CorpusAnswerContext;
   try {
-    retrieved = await retrieveForQuestion({
-      query: question,
-      limit: poolLimit,
-      excludeIds: options.excludeIds,
-      ...filters,
+    ctx = await buildCorpusAnswerContext(question, filters, {
+      maxBuckets: 5,
+      quotesPerBucket: 3,
     });
   } catch (error) {
-    console.error("[rag] hybridSearch failed:", error);
+    console.error("[rag] corpus aggregation failed:", error);
     return scopeRefusal(
-      "Search failed temporarily. Wait a moment and try again.",
-      { refusal: "search_error" }
+      "Analysis failed temporarily. Wait a moment and try again.",
+      { refusal: "aggregation_error" }
     );
   }
 
-  const gate = evaluateEvidenceGate(retrieved);
-  if (!gate.allowed) {
-    const response = {
-      ...insufficientEvidenceResponse(gate.meta),
-      status: "insufficient_evidence" as const,
-    };
-    await logQuerySession(
-      question,
-      response,
-      "insufficient_evidence",
-      gate.meta.retrieved_count
+  if (ctx.total_analyzed === 0) {
+    const response = scopeRefusal(
+      "No analyzed reviews are available yet. Run enrichment on ingested reviews first.",
+      { refusal: "empty_corpus", total_analyzed: 0 }
     );
+    await logQuerySession(question, response, "insufficient_evidence", 0);
     return response;
   }
 
-  const relevance = evaluateRetrievalRelevance(gate.items, question);
-  if (!relevance.allowed) {
-    const response = scopeRefusal(relevance.reason!, {
-      ...gate.meta,
-      max_similarity: relevance.max_similarity,
-      avg_top_similarity: relevance.avg_top_similarity,
-      refusal: "weak_retrieval",
-    });
-    await logQuerySession(
-      question,
-      response,
-      "insufficient_evidence",
-      gate.meta.retrieved_count
+  if (ctx.buckets.length === 0 || ctx.buckets.every((b) => b.count === 0)) {
+    const response = scopeRefusal(
+      "No tagged reviews matched this question in the analyzed corpus. Try rephrasing or broadening the topic.",
+      {
+        refusal: "no_matching_tags",
+        total_analyzed: ctx.total_analyzed,
+      }
     );
+    await logQuerySession(question, response, "insufficient_evidence", 0);
     return response;
   }
 
-  const [enrichmentAll, verifiedStats] = await Promise.all([
-    loadEnrichmentForItems(gate.items.map((i) => i.id)),
-    computeVerifiedStats(question),
-  ]);
-
-  attachEnrichment(gate.items, enrichmentAll);
-
-  const allQualifying = gate.items;
-  const itemsForAnalysis = allQualifying.slice(0, topK);
-
-  const { source_attribution: rawAttribution, theme_breakdown } = computeAttribution(
-    allQualifying,
-    enrichmentAll
+  const findings = buildCorpusFindings(ctx) as QuoteBackedFinding[];
+  const opts = summaryOptions(ctx);
+  const theme_breakdown = corpusBucketsToThemeBreakdown(ctx.buckets);
+  const source_attribution = filterSourceAttribution(
+    computeSourceAttributionFromQuotes(ctx)
   );
-  const source_attribution = filterSourceAttribution(rawAttribution);
-
-  const sampleSentiment = computeSampleSentiment(
-    allQualifying.map(
-      (i) => enrichmentAll.get(i.id)?.sentiment as string | undefined
-    )
+  const illustrativeQuoteCount = Object.values(ctx.quotesByBucket).reduce(
+    (n, qs) => n + qs.length,
+    0
   );
 
-  const meta = {
-    ...gate.meta,
-    max_similarity: relevance.max_similarity,
-    avg_top_similarity: relevance.avg_top_similarity,
-    verified_stats: verifiedStats,
-    sample_sentiment: sampleSentiment,
-    retrieval_pool_limit: poolLimit,
-    retrieval_sample_size: allQualifying.length,
-    analysis_context_size: itemsForAnalysis.length,
-    min_retrieval_score: gate.meta.min_retrieval_score,
-    retrieval_sentiment_mode: classifyRetrievalSentimentMode(question),
-    segment_retrieval_mode: detectSegmentRetrievalIntent(question).mode,
-    insight_mode: true,
+  const meta: Record<string, unknown> = {
+    total_analyzed: ctx.total_analyzed,
+    corpus_aggregation: true,
+    corpus_buckets: ctx.buckets,
+    illustrative_quote_count: illustrativeQuoteCount,
+    theme_breakdown_source: "corpus",
   };
 
   if (!isGroqConfigured()) {
-    return buildHeuristicResponse(
+    const response = buildHeuristicCorpusResponse(question, ctx, meta);
+    await logQuerySession(
       question,
-      itemsForAnalysis,
-      allQualifying,
-      enrichmentAll,
-      source_attribution,
-      theme_breakdown,
-      verifiedStats,
-      sampleSentiment,
-      meta
+      response,
+      "completed",
+      ctx.total_analyzed
     );
+    return response;
   }
 
   const groq = getGroqClient();
-  const context = buildContextBlock(itemsForAnalysis, enrichmentAll);
-  const statsBlock = formatVerifiedStatsBlock(verifiedStats);
+  const env = getEnv();
+  const statsBlock = formatCorpusStatsBlock(ctx);
+  const quotesBlock = formatIllustrativeQuotesBlock(ctx);
+  const allQuoteTexts = findings.map((f) => f.quote);
 
   let parsed: ReturnType<typeof parseGroqResponse> = null;
   try {
@@ -308,12 +262,11 @@ export async function answerQuestion(
           role: "user",
           content: [
             `Question: ${question}`,
-            statsBlock
-              ? `<verified_stats>\n${statsBlock}\n</verified_stats>`
-              : `<verified_stats>No corpus-wide count available — use retrieval sample only (${allQualifying.length} reviews).</verified_stats>`,
-            `<sample_sentiment>From ${allQualifying.length} retrieved reviews: ${sampleSentiment.positive_pct}% positive, ${sampleSentiment.negative_pct}% negative, ${sampleSentiment.neutral_pct}% neutral.</sample_sentiment>`,
-            `<context>\n${context}\n</context>`,
-            `Return JSON with: executive_summary (2-3 sentences — synthesize patterns, no long quotes), detailed_analysis (4-6 paraphrased insight bullets, one per line — each MUST have a matching supporting_quotes entry), supporting_quotes (array of {quote, theme, source, feedback_item_id} — exact substrings from context only; one quote per insight), product_recommendations (array).`,
+            `<corpus_stats>\n${statsBlock}\n</corpus_stats>`,
+            `<illustrative_quotes>\n${quotesBlock}\n</illustrative_quotes>`,
+            `Use ONLY the pre-computed counts in corpus_stats — do not invent numbers or sample sizes.`,
+            `Executive summary MUST begin with "Analyzed ${ctx.total_analyzed.toLocaleString()} reviews" and include the top theme percentages from corpus_stats.`,
+            `Return JSON with: executive_summary (2-3 sentences using corpus_stats percentages), detailed_analysis (one bullet per top theme with % and count from corpus_stats), supporting_quotes (array of {quote, theme, source, feedback_item_id} — exact substrings from illustrative_quotes only), product_recommendations (array).`,
           ].join("\n\n"),
         },
       ],
@@ -323,124 +276,70 @@ export async function answerQuestion(
       response.choices[0]?.message?.content ?? "{}"
     );
   } catch {
-    return buildHeuristicResponse(
+    const fallback = buildHeuristicCorpusResponse(question, ctx, meta);
+    await logQuerySession(
       question,
-      itemsForAnalysis,
-      allQualifying,
-      enrichmentAll,
-      source_attribution,
-      theme_breakdown,
-      verifiedStats,
-      sampleSentiment,
-      meta
+      fallback,
+      "completed",
+      ctx.total_analyzed
     );
+    return fallback;
   }
 
-  if (!parsed) {
-    return buildHeuristicResponse(
+  if (!parsed?.executive_summary) {
+    const fallback = buildHeuristicCorpusResponse(question, ctx, meta);
+    await logQuerySession(
       question,
-      itemsForAnalysis,
-      allQualifying,
-      enrichmentAll,
-      source_attribution,
-      theme_breakdown,
-      verifiedStats,
-      sampleSentiment,
-      meta
+      fallback,
+      "completed",
+      ctx.total_analyzed
     );
+    return fallback;
   }
 
-  const contents = itemsForAnalysis.map((i) => i.content);
   const quoteStrings = (parsed.supporting_quotes ?? []).map((q) =>
     coerceToText(q.quote)
   );
-  const validated = validateAllQuotes(quoteStrings, contents);
+  const validated = validateAllQuotes(quoteStrings, allQuoteTexts);
 
-  const rawSupportingQuotes = (parsed.supporting_quotes ?? [])
+  const groqQuotes = (parsed.supporting_quotes ?? [])
     .filter((_, idx) => validated[idx]?.valid)
     .map((q) => {
-      const item =
-        itemsForAnalysis.find((i) => i.id === q.feedback_item_id) ??
-        itemsForAnalysis.find((i) =>
-          i.content.includes(coerceToText(q.quote).slice(0, 40))
+      const match =
+        findings.find((f) => f.feedback_item_id === q.feedback_item_id) ??
+        findings.find((f) =>
+          f.quote.includes(coerceToText(q.quote).slice(0, 40))
         ) ??
-        itemsForAnalysis[0];
+        findings[0];
       return {
         quote: coerceToText(q.quote),
-        theme: q.theme ?? "general",
-        source: q.source ?? item?.source ?? "unknown",
-        date: item?.created_at?.toISOString?.() ?? "",
-        feedback_item_id: q.feedback_item_id ?? item?.id ?? "",
+        theme: q.theme ?? match?.theme ?? "general",
+        source: q.source ?? match?.source ?? "unknown",
+        date: match?.date ?? "",
+        feedback_item_id: q.feedback_item_id ?? match?.feedback_item_id ?? "",
       };
     });
 
-  const groqInsights = filterInsightBullets(
+  const heuristicFields = findingsToRagFields(findings, question, opts);
+  const supporting_quotes =
+    groqQuotes.length > 0 ? groqQuotes : heuristicFields.supporting_quotes;
+
+  const detailedBullets = filterInsightBullets(
     parseDetailedBullets(parsed.detailed_analysis)
   );
-  let findings = buildQuoteBackedFindings(
-    question,
-    allQualifying,
-    enrichmentAll
-  );
-
-  if (findings.length < 2) {
-    const groqFindings = reconcileGroqFindings(groqInsights, rawSupportingQuotes);
-    if (groqFindings.length > findings.length) {
-      findings = groqFindings;
-    }
-  }
-
-  if (findings.length === 0) {
-    return buildHeuristicResponse(
-      question,
-      itemsForAnalysis,
-      allQualifying,
-      enrichmentAll,
-      source_attribution,
-      theme_breakdown,
-      verifiedStats,
-      sampleSentiment,
-      meta
-    );
-  }
-
-  const fields = findingsToRagFields(findings, question);
-
-  const executive_summary = fields.executive_summary;
-  const detailed_analysis = fields.detailed_analysis;
-  const supporting_quotes = fields.supporting_quotes;
-  const research_sections =
-    parsed.research_sections?.filter((s) => s.title && s.body) ??
-    buildResearchSections(
-      allQualifying,
-      enrichmentAll,
-      verifiedStats,
-      sampleSentiment,
-      allQualifying.length
-    );
-
-  if (!executive_summary.trim() || !detailed_analysis.trim()) {
-    return buildHeuristicResponse(
-      question,
-      itemsForAnalysis,
-      allQualifying,
-      enrichmentAll,
-      source_attribution,
-      theme_breakdown,
-      verifiedStats,
-      sampleSentiment,
-      meta
-    );
-  }
+  const detailed_analysis =
+    detailedBullets.length > 0
+      ? detailedBullets.join("\n")
+      : heuristicFields.detailed_analysis || buildCorpusDetailedAnalysis(ctx);
 
   const result: RagResponse = {
     status: "completed",
-    executive_summary,
+    executive_summary: coerceToText(parsed.executive_summary).trim(),
     detailed_analysis,
-    research_summary: fields.research_summary,
-    research_sections,
+    research_summary: heuristicFields.research_summary,
+    research_sections: buildCorpusResearchSections(ctx, question),
     key_findings: [],
-    findings: fields.findings,
+    findings: heuristicFields.findings,
     supporting_quotes,
     theme_breakdown,
     source_attribution,
@@ -448,61 +347,8 @@ export async function answerQuestion(
     meta,
   };
 
-  await logQuerySession(question, result, "completed", allQualifying.length);
+  await logQuerySession(question, result, "completed", ctx.total_analyzed);
   return result;
-}
-
-function buildHeuristicResponse(
-  question: string,
-  items: RetrievedFeedbackItem[],
-  allItems: RetrievedFeedbackItem[],
-  enrichment: Map<string, Record<string, unknown>>,
-  source_attribution: RagResponse["source_attribution"],
-  theme_breakdown: RagResponse["theme_breakdown"],
-  verifiedStats: VerifiedStat[],
-  sampleSentiment: SampleSentiment,
-  meta: Record<string, unknown>
-): RagResponse {
-  const sampleSize = allItems.length;
-  const findings = buildQuoteBackedFindings(question, allItems, enrichment);
-
-  if (findings.length === 0) {
-    return {
-      status: "insufficient_evidence",
-      executive_summary:
-        "Not enough recommendation-related review quotes matched this question to support grounded insights.",
-      detailed_analysis: "",
-      key_findings: [],
-      supporting_quotes: [],
-      theme_breakdown,
-      source_attribution,
-      product_recommendations: [],
-      meta,
-    };
-  }
-
-  const fields = findingsToRagFields(findings, question);
-
-  return {
-    status: "completed",
-    executive_summary: fields.executive_summary,
-    detailed_analysis: fields.detailed_analysis,
-    research_summary: fields.research_summary,
-    research_sections: buildResearchSections(
-      allItems,
-      enrichment,
-      verifiedStats,
-      sampleSentiment,
-      sampleSize
-    ),
-    key_findings: [],
-    findings: fields.findings,
-    supporting_quotes: fields.supporting_quotes,
-    theme_breakdown,
-    source_attribution,
-    product_recommendations: [],
-    meta,
-  };
 }
 
 async function logQuerySession(

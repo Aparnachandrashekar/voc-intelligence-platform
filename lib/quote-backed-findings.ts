@@ -1,6 +1,10 @@
 import { cleanQuoteForDisplay } from "@/lib/intelligence/quote-display";
 import { expandQuery } from "@/lib/query-expansion";
-import { synthesizeSummaryFromFindings } from "@/lib/quote-summary";
+import { synthesizeSummaryFromFindings, type SummaryOptions } from "@/lib/quote-summary";
+import {
+  isEmotionalRepetitionQuestion,
+  isMoodVibeQuestion,
+} from "@/lib/retrieval/intent-alignment";
 import {
   isPrimaryRepetitionComplaint,
   isRepetitionQuestion,
@@ -21,8 +25,25 @@ export interface QuoteBackedFinding {
   feedback_item_id: string;
 }
 
+const EMOTION_IN_QUOTE =
+  /\b(frustrat|bored|disappoint|annoy|hate|tired of|sick of|angry|upset|irritat)\b/i;
+
 const REC_SENTENCE =
-  /recommend|suggest|algorithm|discover|personaliz|for you|daily mix|release radar|discover weekly|same song|same music|same track|repeat|repetitive|stale|variety|bored|listening habit|radio|autoplay|not random|predictable|shuffle.*same|discover weekly|made for you/i;
+  /recommend|suggest|algorithm|discover|personaliz|for you|daily mix|release radar|discover weekly|same song|same music|same track|repeat|repetitive|stale|variety|bored|listening habit|radio|autoplay|not random|predictable|shuffle.*same|discover weekly|made for you|frustrat|disappoint|annoy|mood|vibe|wrong|interrupt/i;
+
+function matchesRepetitionOrEmotionContent(content: string): boolean {
+  return (
+    isPrimaryRepetitionComplaint(content) ||
+    (EMOTION_IN_QUOTE.test(content) &&
+      /recommend|suggest|algorithm|discover|repeat|same song|same music|repetitive|shuffle|playlist|for you|daily mix/i.test(
+        content
+      )) ||
+    (EMOTION_IN_QUOTE.test(content) &&
+      /repeat|same song|same music|repetitive|stale|bored|variety|over and over/i.test(
+        content
+      ))
+  );
+}
 
 const GENERIC_PRAISE =
   /outstanding|incredible selection|best app|love this app|great app|five stars|5 stars|perfect app/i;
@@ -32,6 +53,8 @@ function scoreQuoteSentence(sentence: string, question = ""): number {
   const q = question.toLowerCase();
   let score = 0;
   if (/same song|same music|same track|repeat|repetitive|over and over/.test(s)) score += 12;
+  if (/frustrat|disappoint|annoy|bored|tired of|sick of/.test(s)) score += 10;
+  if (/mood|vibe|wrong|doesn't fit|does not fit|interrupt/.test(s)) score += 8;
   if (/algorithm|recommend|suggest|personaliz|for you|daily mix|discover weekly/.test(s)) score += 9;
   if (/discover|stale|variety|bored|not random|predictable/.test(s)) score += 7;
   if (GENERIC_PRAISE.test(s) && !/algorithm|recommend|repeat|same|discover|suggest|stale|variety/.test(s)) {
@@ -78,7 +101,18 @@ function extractQuoteCandidates(
   const out: Array<{ sentence: string; item: RetrievedFeedbackItem }> = [];
 
   for (const item of items) {
-    if (isRepetitionQuestion(question) && !isPrimaryRepetitionComplaint(item.content)) {
+    if (
+      isRepetitionQuestion(question) &&
+      !isEmotionalRepetitionQuestion(question) &&
+      !isMoodVibeQuestion(question) &&
+      !isPrimaryRepetitionComplaint(item.content)
+    ) {
+      continue;
+    }
+    if (
+      isEmotionalRepetitionQuestion(question) &&
+      !matchesRepetitionOrEmotionContent(item.content)
+    ) {
       continue;
     }
     if (
@@ -103,7 +137,18 @@ function extractQuoteCandidates(
         terms.length === 0 || terms.some((term) => lower.includes(term.toLowerCase()));
       if (!termHit && !REC_SENTENCE.test(sentence)) continue;
       if (!isUsableQuoteSentence(sentence, question)) continue;
-      if (isRepetitionQuestion(question) && !isPrimaryRepetitionComplaint(sentence)) {
+      if (
+        isRepetitionQuestion(question) &&
+        !isEmotionalRepetitionQuestion(question) &&
+        !isMoodVibeQuestion(question) &&
+        !isPrimaryRepetitionComplaint(sentence)
+      ) {
+        continue;
+      }
+      if (
+        isEmotionalRepetitionQuestion(question) &&
+        !matchesRepetitionOrEmotionContent(sentence)
+      ) {
         continue;
       }
 
@@ -116,7 +161,12 @@ function extractQuoteCandidates(
 
   if (out.length === 0) {
     for (const item of items) {
-      if (isRepetitionQuestion(question) && !isPrimaryRepetitionComplaint(item.content)) {
+      if (
+        isRepetitionQuestion(question) &&
+        !isEmotionalRepetitionQuestion(question) &&
+        !isMoodVibeQuestion(question) &&
+        !isPrimaryRepetitionComplaint(item.content)
+      ) {
         continue;
       }
       if (
@@ -154,6 +204,15 @@ function deriveInsightFromQuote(sentence: string): string | null {
 
   if (/same song|same songs|same music|same track|repeat|repetitive|over and over|again and again|keep playing/.test(s)) {
     return "Users report hearing the same tracks too often — they experience recommendations as looping rather than fresh.";
+  }
+  if (/frustrat|annoy|irritat|sick of|tired of/.test(s)) {
+    return "Reviewers use frustrated language when recommendations feel repetitive or ignore their listening context.";
+  }
+  if (/bored|boring|disappoint/.test(s) && /repeat|same|recommend|suggest|algorithm|discover|playlist|shuffle/.test(s)) {
+    return "Users describe boredom or disappointment when Spotify keeps surfacing the same recommendations.";
+  }
+  if (/wrong|doesn't fit|does not fit|not fit|mismatch|interrupt|ruin|off vibe|bad mood/.test(s) && /recommend|suggest|playlist|shuffle|discover|for you|algorithm/.test(s)) {
+    return "Reviewers say Spotify's suggestions miss the mood or vibe they want for what they're doing.";
   }
   if (/stale|bored|boring|no variety|lack of variety|predictable/.test(s)) {
     return "Reviewers describe their feeds as stale or predictable, with too little variety in what Spotify surfaces.";
@@ -310,14 +369,16 @@ export function reconcileGroqFindings(
 
 export function buildResearchSummary(
   question: string,
-  findings: QuoteBackedFinding[]
+  findings: QuoteBackedFinding[],
+  options?: SummaryOptions
 ): string {
-  return synthesizeSummaryFromFindings(findings, question);
+  return synthesizeSummaryFromFindings(findings, question, options);
 }
 
 export function findingsToRagFields(
   findings: QuoteBackedFinding[],
-  question = ""
+  question = "",
+  options?: SummaryOptions
 ): {
   executive_summary: string;
   detailed_analysis: string;
@@ -325,7 +386,7 @@ export function findingsToRagFields(
   supporting_quotes: RagResponse["supporting_quotes"];
   findings: QuoteBackedFinding[];
 } {
-  const research_summary = buildResearchSummary(question, findings);
+  const research_summary = buildResearchSummary(question, findings, options);
   const executive = research_summary || findings[0]?.insight || "";
 
   return {

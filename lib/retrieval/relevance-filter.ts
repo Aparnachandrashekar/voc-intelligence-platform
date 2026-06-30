@@ -9,9 +9,10 @@ import { sortByRelevanceStable } from "@/lib/retrieval/deterministic-rank";
  */
 export function itemMeetsRelevanceCutoff(
   item: RetrievedFeedbackItem,
-  minCosine: number
+  minCosine: number,
+  question?: string
 ): boolean {
-  return itemQualifiesForEvidence(item, minCosine);
+  return itemQualifiesForEvidence(item, minCosine, question);
 }
 
 /**
@@ -21,12 +22,13 @@ export function itemMeetsRelevanceCutoff(
 export function applyRelevanceCutoff(
   items: RetrievedFeedbackItem[],
   maxResults: number,
-  minCosine?: number
+  minCosine?: number,
+  question?: string
 ): RetrievedFeedbackItem[] {
   const cutoff = minCosine ?? getEnv().MIN_RETRIEVAL_SCORE;
 
   const qualifying = sortByRelevanceStable(
-    items.filter((item) => itemMeetsRelevanceCutoff(item, cutoff))
+    items.filter((item) => itemMeetsRelevanceCutoff(item, cutoff, question))
   );
 
   return qualifying.slice(0, maxResults);

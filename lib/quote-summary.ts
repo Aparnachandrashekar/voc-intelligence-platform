@@ -2,6 +2,12 @@ import { formatPersona } from "@/lib/intelligence/format";
 import { expandQuery } from "@/lib/query-expansion";
 import { extractQuestionTopicTerms } from "@/lib/rag-topics";
 import type { QuoteBackedFinding } from "@/lib/quote-backed-findings";
+import type { CorpusBucketStat } from "@/lib/rag-corpus-aggregate";
+
+export interface SummaryOptions {
+  total_analyzed?: number;
+  bucketStats?: CorpusBucketStat[];
+}
 
 const STOP = new Set([
   "about",
@@ -194,45 +200,86 @@ function segmentBreakdown(findings: QuoteBackedFinding[]): string | null {
 }
 
 /**
- * Build executive / research summary strictly from the quotes that were returned.
+ * Build executive / research summary from corpus counts + illustrative quotes.
  */
 export function synthesizeSummaryFromFindings(
+  findings: QuoteBackedFinding[],
+  question = "",
+  options?: SummaryOptions
+): string {
+  if (findings.length === 0 && !options?.total_analyzed) return "";
+
+  const quotes = findings.map((f) => f.quote.trim()).filter(Boolean);
+  const bucketStats = options?.bucketStats ?? [];
+  const totalAnalyzed = options?.total_analyzed;
+
+  const parts: string[] = [];
+
+  if (totalAnalyzed && totalAnalyzed > 0 && bucketStats.length > 0) {
+    const breakdown = bucketStats
+      .slice(0, 5)
+      .map(
+        (b) =>
+          `${b.pct}% ${b.label.toLowerCase()} (${b.count.toLocaleString()} reviews)`
+      )
+      .join(", ");
+    parts.push(`Analyzed ${totalAnalyzed.toLocaleString()} reviews. ${breakdown}.`);
+  } else if (totalAnalyzed && totalAnalyzed > 0) {
+    parts.push(`Analyzed ${totalAnalyzed.toLocaleString()} reviews.`);
+  }
+
+  if (quotes.length > 0) {
+    const themes = themesFromQuotes(quotes);
+    const keywords = sharedKeywords(quotes);
+    const anchor = clipPhrase(selectMostRelevantQuote(quotes, question));
+    const segmentNote = segmentBreakdown(findings);
+
+    if (!totalAnalyzed) {
+      parts.push(
+        `Users most often raise ${themes.length > 0 ? themes.join(", ") : keywords.slice(0, 3).join(", ") || "the themes below"}.`
+      );
+    }
+
+    if (anchor) {
+      parts.push(`One reviewer puts it this way: "${anchor}"`);
+    }
+
+    if (keywords.length > 0 && themes.length > 0) {
+      parts.push(
+        `Shared language across illustrative quotes includes "${keywords.slice(0, 3).join('", "')}".`
+      );
+    }
+
+    if (segmentNote) {
+      parts.push(segmentNote);
+    }
+
+    if (/segment|persona|user type|which user/i.test(question) && !segmentNote) {
+      parts.push(
+        "Segment labels were not available for these quotes — re-run embed:active to index persona tags."
+      );
+    }
+  }
+
+  return parts.join(" ");
+}
+
+/** @deprecated Use synthesizeSummaryFromFindings with total_analyzed — kept for callers without corpus context. */
+export function synthesizeRetrievalSummaryFromFindings(
   findings: QuoteBackedFinding[],
   question = ""
 ): string {
   if (findings.length === 0) return "";
-
   const quotes = findings.map((f) => f.quote.trim()).filter(Boolean);
   const themes = themesFromQuotes(quotes);
   const keywords = sharedKeywords(quotes);
   const anchor = clipPhrase(selectMostRelevantQuote(quotes, question));
   const segmentNote = segmentBreakdown(findings);
-
   const parts: string[] = [];
-
   parts.push(
-    `From ${quotes.length} retrieved review${quotes.length === 1 ? "" : "s"}, users most often raise ${themes.length > 0 ? themes.join(", ") : keywords.slice(0, 3).join(", ") || "the themes below"}.`
+    `Users most often raise ${themes.length > 0 ? themes.join(", ") : keywords.slice(0, 3).join(", ") || "the themes below"}.`
   );
-
-  if (anchor) {
-    parts.push(`One reviewer puts it this way: "${anchor}"`);
-  }
-
-  if (keywords.length > 0 && themes.length > 0) {
-    parts.push(
-      `Shared language across these quotes includes "${keywords.slice(0, 3).join('", "')}".`
-    );
-  }
-
-  if (segmentNote) {
-    parts.push(segmentNote);
-  }
-
-  if (/segment|persona|user type|which user/i.test(question) && !segmentNote) {
-    parts.push(
-      "Segment labels were not available for these quotes — re-run embed:active to index persona tags."
-    );
-  }
-
+  if (anchor) parts.push(`One reviewer puts it this way: "${anchor}"`);
+  if (segmentNote) parts.push(segmentNote);
   return parts.join(" ");
 }

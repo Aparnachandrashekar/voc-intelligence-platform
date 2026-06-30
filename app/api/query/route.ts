@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { warmEmbeddingModel } from "@/lib/embeddings";
 import { answerQuestion } from "@/lib/rag";
 
 export const dynamic = "force-dynamic";
@@ -22,9 +21,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    // Avoid first-query failures when /api/warm has not finished yet.
-    await warmEmbeddingModel();
 
     const response = await answerQuestion(question.trim(), { segment }, { excludeIds });
     return NextResponse.json(response);

@@ -2,7 +2,7 @@
 export type RetrievalSentimentMode = "negative" | "positive" | "balanced";
 
 const NEGATIVE_INTENT =
-  /\b(why|problem|issue|fail|broken|frustrat|complain|hate|bad|worse|declin|struggle|stop|repetitive|repeat|same songs?|stale|bored|weak|poor|don't trust|distrust|inaccurate|wrong|terrible|awful|garbage|useless|horrible|disappoint|bug|crash|slow|lag|cancel|leave|switch|alternative|wish|differently|hard to|can't find|difficult|not working|doesn't work)\b/i;
+  /\b(why|problem|issue|fail|broken|frustrat|complain|hate|bad|worse|declin|struggle|stop|repetitive|repeat|same songs?|stale|bored|boredom|weak|poor|don't trust|distrust|inaccurate|wrong|terrible|awful|garbage|useless|horrible|disappoint|disappointment|annoy|irritat|bug|crash|slow|lag|cancel|leave|switch|alternative|wish|differently|hard to|can't find|difficult|not working|doesn't work|emotional words?)\b/i;
 
 const POSITIVE_INTENT =
   /\b(what works|works well|love|best|great|praise|positive|happy|satisfied|recommend spotify|keep using|why users stay|what do users like|strengths?|benefits?|delight|enjoy|favorite feature|what's good)\b/i;

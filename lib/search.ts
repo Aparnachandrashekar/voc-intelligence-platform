@@ -7,7 +7,7 @@ import { buildFilterClause, needsEnrichmentJoin } from "@/lib/reports/filters";
 import { buildFtsOrQuery, expandQuery } from "@/lib/query-expansion";
 import { getEnv } from "@/lib/env";
 import { sortByRelevanceStable } from "@/lib/retrieval/deterministic-rank";
-import { filterBySpecificIntent, isNarrowSpecificQuery } from "@/lib/retrieval/intent-alignment";
+import { filterBySpecificIntent, isNarrowSpecificQuery, isEmotionalRepetitionQuestion, isMoodVibeQuestion, isConceptualOnTopic } from "@/lib/retrieval/intent-alignment";
 import { buildSemanticQueryText } from "@/lib/retrieval/semantic-query";
 import { maximalMarginalRelevance } from "@/lib/retrieval/mmr";
 import {
@@ -347,6 +347,88 @@ async function fullTextSearchPool(
   return result.rows.map((row) => mapRow(row, { keyword: 0.35 }));
 }
 
+async function contentPatternSearchPool(
+  options: SearchOptions,
+  pattern: string,
+  poolSentiments: string[]
+): Promise<RetrievedFeedbackItem[]> {
+  const limit = options.limit ?? 20;
+  const fetchLimit = effectiveFetchLimit(limit, options.excludeIds);
+  const filters = pickSearchFilters(options);
+  let { where, params } = buildFilterClause(filters, "f");
+  ({ where, params } = appendExcludeClause(where, params, options.excludeIds));
+  ({ where, params } = appendSentimentPoolClause(where, params, poolSentiments));
+  const join = "INNER JOIN enrichment_results e ON e.feedback_item_id = f.id";
+  const patternIdx = params.length + 1;
+  const limitIdx = params.length + 2;
+  const patternClause = `f.content ~* $${patternIdx}`;
+  const fullWhere = where
+    ? `${where} AND ${patternClause}`
+    : `WHERE ${patternClause}`;
+
+  const result = await getPool().query(
+    `SELECT f.* FROM feedback_items f
+     ${join}
+     ${fullWhere}
+     ORDER BY f.created_at DESC NULLS LAST, f.id ASC
+     LIMIT $${limitIdx}`,
+    [...params, pattern, fetchLimit]
+  );
+
+  return result.rows.map((row) => mapRow(row, { keyword: 0.5 }));
+}
+
+async function fetchConceptualEvidencePool(
+  options: SearchOptions,
+  question: string
+): Promise<RetrievedFeedbackItem[]> {
+  if (!isEmotionalRepetitionQuestion(question) && !isMoodVibeQuestion(question)) {
+    return [];
+  }
+
+  const mode = classifyRetrievalSentimentMode(question);
+  const sentiments =
+    mode === "balanced"
+      ? ["negative", "neutral", "mixed", "positive"]
+      : mode === "negative"
+        ? SENTIMENT_POOLS.negative
+        : SENTIMENT_POOLS.positive;
+
+  const pattern = isEmotionalRepetitionQuestion(question)
+    ? "(frustrat|disappoint|annoy|bored|tired of|sick of|hate|irritat).*(repeat|same song|same music|repetitive|shuffle|algorithm|recommend|discover|playlist|for you|daily mix|over and over)|(repeat|same song|same music|repetitive|shuffle|algorithm|recommend|discover|playlist|for you|daily mix|over and over).*(frustrat|disappoint|annoy|bored|tired of|sick of|hate|irritat)"
+    : "(mood|vibe|feeling|energy|wrong|interrupt|calm|chill|workout).*(recommend|suggest|algorithm|playlist|shuffle|discover|for you|daily mix)|(recommend|suggest|algorithm|playlist|shuffle|discover|for you|daily mix).*(mood|vibe|feeling|energy|wrong|interrupt|calm|chill|workout)";
+
+  return contentPatternSearchPool(options, pattern, sentiments);
+}
+
+/** Put on-topic conceptual matches first so generic negative reviews do not dominate. */
+function promoteConceptualMatches(
+  question: string,
+  items: RetrievedFeedbackItem[],
+  limit: number
+): RetrievedFeedbackItem[] {
+  if (!isEmotionalRepetitionQuestion(question) && !isMoodVibeQuestion(question)) {
+    return items.slice(0, limit);
+  }
+
+  const onTopic = sortByRelevanceStable(
+    items.filter((item) => isConceptualOnTopic(question, item.content))
+  );
+  const rest = sortByRelevanceStable(
+    items.filter((item) => !isConceptualOnTopic(question, item.content))
+  );
+
+  const merged: RetrievedFeedbackItem[] = [];
+  const seen = new Set<string>();
+  for (const item of [...onTopic, ...rest]) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(item);
+    if (merged.length >= limit) break;
+  }
+  return merged;
+}
+
 function balancedPoolSentiments(): string[][] {
   return [
     SENTIMENT_POOLS.negative,
@@ -457,20 +539,79 @@ async function hybridSearchCore(
     buildSemanticQueryText(options.query, mode)
   );
 
-  const candidates = await retrieveFromSentimentMode(
+  const expansion = isNarrowSpecificQuery(options.query)
+    ? null
+    : expandQuery(options.query);
+
+  let candidates = await retrieveFromSentimentMode(
     options,
     mode,
     queryVector
   );
 
+  if (expansion?.contentPattern) {
+    const sentiments =
+      mode === "balanced"
+        ? ["negative", "neutral", "mixed", "positive"]
+        : mode === "negative"
+          ? SENTIMENT_POOLS.negative
+          : SENTIMENT_POOLS.positive;
+    const patternHits = await contentPatternSearchPool(
+      options,
+      expansion.contentPattern,
+      sentiments
+    );
+    if (patternHits.length > 0) {
+      const byId = new Map(candidates.map((item) => [item.id, item]));
+      for (const hit of patternHits) {
+        if (!byId.has(hit.id)) {
+          byId.set(hit.id, hit);
+        }
+      }
+      candidates = reciprocalRankFusion(
+        [candidates, patternHits],
+        effectiveFetchLimit(finalLimit, options.excludeIds)
+      );
+      for (const hit of patternHits) {
+        if (!candidates.some((item) => item.id === hit.id)) {
+          candidates.push(hit);
+        }
+      }
+    }
+  }
+
   const scored = await attachMissingSimilarityScores(queryVector, candidates);
 
-  return finalizeRankedResults(
+  const ranked = await finalizeRankedResults(
     queryVector,
     scored,
-    finalLimit,
+    effectiveFetchLimit(finalLimit, options.excludeIds),
     options.excludeIds
   );
+
+  let merged = ranked;
+  if (isEmotionalRepetitionQuestion(options.query) || isMoodVibeQuestion(options.query)) {
+    const conceptualPool = await fetchConceptualEvidencePool(
+      { ...options, limit: Math.max(finalLimit, 20) },
+      options.query
+    );
+    if (conceptualPool.length > 0) {
+      const byId = new Map(merged.map((item) => [item.id, item]));
+      for (const item of conceptualPool) {
+        if (!byId.has(item.id)) {
+          byId.set(item.id, item);
+        }
+      }
+      merged = [...byId.values()];
+      const scoredConceptual = await attachMissingSimilarityScores(
+        queryVector,
+        merged
+      );
+      merged = scoredConceptual;
+    }
+  }
+
+  return promoteConceptualMatches(options.query, merged, finalLimit);
 }
 
 export async function hybridSearch(
@@ -537,7 +678,9 @@ export async function retrieveForQuestion(
           options.query,
           await hybridSearch({ ...options, excludeIds: undefined, limit: poolLimit })
         ),
-        poolLimit
+        poolLimit,
+        undefined,
+        options.query
       );
       setCachedRetrieval(cacheKey, ranked);
     }
@@ -550,7 +693,9 @@ export async function retrieveForQuestion(
           options.query,
           await hybridSearch({ ...options, excludeIds: undefined, limit: poolLimit })
         ),
-        poolLimit
+        poolLimit,
+        undefined,
+        options.query
       );
     if (!cached) {
       setCachedRetrieval(cacheKey, base);
@@ -558,7 +703,9 @@ export async function retrieveForQuestion(
     const excluded = new Set(options.excludeIds);
     ranked = applyRelevanceCutoff(
       base.filter((item) => !excluded.has(item.id)),
-      poolLimit
+      poolLimit,
+      undefined,
+      options.query
     );
   }
 

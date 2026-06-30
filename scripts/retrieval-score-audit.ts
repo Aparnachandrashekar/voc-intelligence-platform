@@ -47,8 +47,8 @@ async function main() {
   }
 
   const intentFiltered = filterBySpecificIntent(QUERY, raw);
-  const cutoff = applyRelevanceCutoff(intentFiltered, poolLimit);
-  const gate = evaluateEvidenceGate(cutoff);
+  const cutoff = applyRelevanceCutoff(intentFiltered, poolLimit, undefined, QUERY);
+  const gate = evaluateEvidenceGate(cutoff, QUERY);
   const relevance = evaluateRetrievalRelevance(gate.items, QUERY);
 
   console.log("\nAfter intent + relevance filters:");

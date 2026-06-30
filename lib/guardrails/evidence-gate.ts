@@ -22,14 +22,15 @@ export interface EvidenceGateResult {
  * See docs/guardrails.md — Guardrail 4 & 5.
  */
 export function evaluateEvidenceGate(
-  items: RetrievedFeedbackItem[]
+  items: RetrievedFeedbackItem[],
+  question?: string
 ): EvidenceGateResult {
   const env = getEnv();
   const minScore = env.MIN_RETRIEVAL_SCORE;
   const minItems = env.MIN_EVIDENCE_ITEMS;
 
   const qualifying = items.filter((item) =>
-    itemQualifiesForEvidence(item, minScore)
+    itemQualifiesForEvidence(item, minScore, question)
   );
 
   const maxSimilarity =

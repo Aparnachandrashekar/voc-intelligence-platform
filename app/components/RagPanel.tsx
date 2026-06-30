@@ -35,6 +35,10 @@ interface SampleSentimentMeta {
 interface RagMeta {
   verified_stats?: VerifiedStatMeta[];
   sample_sentiment?: SampleSentimentMeta;
+  corpus_aggregation?: boolean;
+  total_analyzed?: number;
+  illustrative_quote_count?: number;
+  corpus_buckets?: Array<{ label: string; count: number; pct: number }>;
   retrieval_pool_limit?: number;
   retrieval_sample_size?: number;
   analysis_context_size?: number;
@@ -103,6 +107,14 @@ function ResearchReport({
   const meta = (response.meta ?? {}) as RagMeta;
   const verifiedStats = meta.verified_stats ?? [];
   const sampleSentiment = meta.sample_sentiment;
+  const corpusBuckets =
+    meta.corpus_buckets ??
+    response.theme_breakdown.map((t) => ({
+      label: t.theme,
+      count: t.count,
+      pct: 0,
+    }));
+  const totalAnalyzed = meta.total_analyzed;
   const sampleSize =
     meta.retrieval_sample_size ??
     meta.retrieved_count ??
@@ -115,7 +127,9 @@ function ResearchReport({
   const hasRedditInSample = filteredSources.some((s) => s.source === "forum");
 
   const hasMethodology =
+    meta.corpus_aggregation ||
     verifiedStats.length > 0 ||
+    corpusBuckets.length > 0 ||
     sampleSize > 0 ||
     filteredSources.length > 0;
 
@@ -221,12 +235,41 @@ function ResearchReport({
               </div>
             )}
 
-            {(sampleSentiment || sampleSize > 0) && (
+            {meta.corpus_aggregation && corpusBuckets.length > 0 && (
               <div className="research-block research-block-nested">
-                <h4>Retrieval sample ({sampleSize.toLocaleString()} reviews)</h4>
+                <h4>
+                  Theme breakdown
+                  {totalAnalyzed
+                    ? ` (${totalAnalyzed.toLocaleString()} analyzed reviews)`
+                    : ""}
+                </h4>
+                <div className="research-stats-grid">
+                  {corpusBuckets.map((b) => (
+                    <div key={b.label} className="research-stat research-stat-verified">
+                      <div className="research-stat-value">
+                        {b.pct > 0 ? `${b.pct}%` : b.count.toLocaleString()}
+                      </div>
+                      <div className="research-stat-label">
+                        {b.label}
+                        {b.pct > 0 ? ` · ${b.count.toLocaleString()} reviews` : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(meta.corpus_aggregation || sampleSentiment || sampleSize > 0) && (
+              <div className="research-block research-block-nested">
+                <h4>
+                  {meta.corpus_aggregation
+                    ? "Methodology"
+                    : `Retrieval sample (${sampleSize.toLocaleString()} reviews)`}
+                </h4>
                 <p className="chart-caption muted research-methodology-caption">
                   {formatRagMethodologyCaption(meta)}
                 </p>
+                {!meta.corpus_aggregation && (
                 <div className="research-stats-grid">
                   <div className="research-stat">
                     <div className="research-stat-value">{sampleSize}</div>
@@ -249,6 +292,7 @@ function ResearchReport({
                     </>
                   )}
                 </div>
+                )}
                 {filteredSources.length > 0 && (
                   <p className="research-source-breakdown muted">
                     {filteredSources
