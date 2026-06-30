@@ -1,3 +1,5 @@
+import type { ActiveCorpusStats } from "@/lib/corpus-stats";
+import { formatCorpusIndexedLine } from "@/lib/intelligence/copy";
 import type { PipelineStatusResponse } from "@/lib/types/dashboard";
 
 function formatRelative(iso: string | null): string {
@@ -14,10 +16,10 @@ function formatRelative(iso: string | null): string {
 
 export function PipelineUtilityBar({
   status,
-  totalReviews,
+  corpusStats,
 }: {
   status: PipelineStatusResponse;
-  totalReviews: number;
+  corpusStats: ActiveCorpusStats;
 }) {
   const isLive = status.global_status === "online";
   const sources = status.sources.map((s) => s.label).join(" · ");
@@ -35,7 +37,7 @@ export function PipelineUtilityBar({
         ·
       </span>
       <span className="pipeline-utility-meta">
-        {totalReviews.toLocaleString()} reviews indexed
+        {formatCorpusIndexedLine(corpusStats)}
       </span>
       {status.last_refresh && (
         <>

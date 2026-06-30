@@ -1,6 +1,8 @@
 import { Suspense } from "react";
 import { ReportFilters } from "@/app/components/ReportFilters";
 import { SegmentsPersonasView } from "@/app/components/intelligence/IntelligenceViews";
+import { getActiveCorpusStats } from "@/lib/corpus-stats";
+import { formatCorpusSegmentsIntro } from "@/lib/intelligence/copy";
 import { getSegmentsPersonasReport } from "@/lib/segments/aggregations";
 import { parseReportFilters } from "@/lib/reports/filters";
 
@@ -15,7 +17,10 @@ export default async function SegmentsReportPage({
       Object.entries(params).filter(([, v]) => v) as [string, string][]
     )
   );
-  const report = await getSegmentsPersonasReport(filters);
+  const [report, corpusStats] = await Promise.all([
+    getSegmentsPersonasReport(filters),
+    getActiveCorpusStats(),
+  ]);
 
   return (
     <main className="page dashboard-page">
@@ -23,8 +28,7 @@ export default async function SegmentsReportPage({
           <p className="premium-eyebrow">User Personas</p>
           <h1 className="premium-display">Who is speaking</h1>
           <p className="premium-subhead">
-            Segments derived from AI clustering of 5,162 App Store and Play Store
-            reviews.
+            {formatCorpusSegmentsIntro(corpusStats)}
           </p>
         </header>
         <Suspense>

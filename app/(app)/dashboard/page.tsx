@@ -11,6 +11,7 @@ import {
   getPipelineStatus,
   parseDashboardRange,
 } from "@/lib/dashboard/aggregations";
+import { getActiveCorpusStats } from "@/lib/corpus-stats";
 import { parseReportFilters } from "@/lib/reports/filters";
 
 export default async function DashboardPage({
@@ -25,18 +26,16 @@ export default async function DashboardPage({
   const range = parseDashboardRange(params.range);
   const filters = parseReportFilters(urlParams);
 
-  const [status, summary, metrics] = await Promise.all([
+  const [status, summary, metrics, corpusStats] = await Promise.all([
     getPipelineStatus(),
     getDashboardSummary(range, filters),
     getDashboardMetrics(range, filters),
+    getActiveCorpusStats(),
   ]);
 
   return (
     <main className="page dashboard-page">
-        <PipelineUtilityBar
-          status={status}
-          totalReviews={summary.total_reviews}
-        />
+        <PipelineUtilityBar status={status} corpusStats={corpusStats} />
 
         <Suspense>
           <DashboardClientShell range={range}>
@@ -66,7 +65,7 @@ export default async function DashboardPage({
           <p className="premium-section-sub ask-dashboard-section-sub">
             Natural-language research with structured answers and evidence.
           </p>
-          <RagPanel compact prominent hideHeader />
+          <RagPanel compact prominent hideHeader corpusStats={corpusStats} />
         </section>
       </main>
   );

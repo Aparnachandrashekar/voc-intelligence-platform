@@ -5,6 +5,7 @@ import gsap from "gsap";
 import {
   formatPctOfAnalyzed,
   formatRagMethodologyCaption,
+  formatCorpusRagIntro,
   RAG_REDDIT_FOOTNOTE,
 } from "@/lib/intelligence/copy";
 import { formatSource, formatPersona, formatThemeCluster } from "@/lib/intelligence/format";
@@ -13,6 +14,7 @@ import { coerceToText } from "@/lib/rag-synthesis";
 import { parseDetailedBullets } from "@/lib/rag-synthesis";
 import { UI_FILTER_SOURCES } from "@/lib/sources/ui-sources";
 import { getTrendingSearches } from "@/lib/trending-searches";
+import type { ActiveCorpusStats } from "@/lib/corpus-stats";
 import type { RagResponse } from "@/lib/types/rag";
 
 const QUERY_TIMEOUT_MS = 120_000;
@@ -274,12 +276,14 @@ export function RagPanel({
   hideHeader = false,
   segmentFilter,
   hideExamples = false,
+  corpusStats,
 }: {
   compact?: boolean;
   prominent?: boolean;
   hideHeader?: boolean;
   segmentFilter?: string;
   hideExamples?: boolean;
+  corpusStats?: ActiveCorpusStats;
 }) {
   const trendingSearches = getTrendingSearches();
   const [question, setQuestion] = useState("");
@@ -410,8 +414,9 @@ export function RagPanel({
           <p className="premium-eyebrow">Conversational Research</p>
           <h1>Ask Spotify users anything</h1>
           <p className="premium-subhead">
-            5,162 real user reviews. Ask anything about what Spotify users feel,
-            want, and struggle with.
+            {corpusStats
+              ? formatCorpusRagIntro(corpusStats)
+              : "Ask anything about what Spotify users feel, want, and struggle with."}
           </p>
         </header>
       )}
