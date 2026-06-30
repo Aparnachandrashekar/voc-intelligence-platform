@@ -1,6 +1,6 @@
 import { spawnSync } from "child_process";
 
-const steps = [
+const steps: [string, string[]][] = [
   ["npm", ["run", "corpus:cap"]],
   ["npm", ["run", "enrich", "--", "--force"]],
   ["npm", ["run", "embed:active", "--", "--force"]],

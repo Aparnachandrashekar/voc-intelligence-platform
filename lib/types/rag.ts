@@ -17,6 +17,7 @@ export interface RagResponse {
     quote: string;
     source: string;
     theme: string;
+    segment?: string;
     date: string;
     feedback_item_id: string;
   }>;
