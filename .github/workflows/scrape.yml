@@ -31,7 +31,12 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --include=dev
+        env:
+          NODE_ENV: development
+        run: npm ci
+
+      - name: Verify pipeline CLI
+        run: npx tsx --version
 
       - name: Ingest live reviews (App Store + Play Store)
         run: npm run ingest:live
