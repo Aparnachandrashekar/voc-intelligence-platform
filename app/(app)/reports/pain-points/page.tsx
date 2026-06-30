@@ -9,6 +9,8 @@ import {
   safeServerLoad,
 } from "@/lib/server-fallbacks";
 
+export const dynamic = "force-dynamic";
+
 export default async function PainPointsReportPage({
   searchParams,
 }: {
@@ -58,7 +60,7 @@ export default async function PainPointsReportPage({
             showPersonaFilter
           />
         </Suspense>
-        <VocIntelligenceView report={report} />
+        <VocIntelligenceView key={JSON.stringify(filters)} report={report} />
       </main>
   );
 }

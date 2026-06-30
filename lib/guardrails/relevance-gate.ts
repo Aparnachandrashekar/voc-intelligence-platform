@@ -1,5 +1,4 @@
 import { getEnv } from "@/lib/env";
-import { questionHasKnownTopic } from "@/lib/rag-stats";
 import type { RetrievedFeedbackItem } from "@/lib/types/feedback";
 
 /** Products/services outside the Spotify review corpus. */
@@ -43,57 +42,52 @@ export interface RetrievalRelevanceResult {
 }
 
 function cosineScores(items: RetrievedFeedbackItem[]): number[] {
-  return items.map((i) => i.similarity_score ?? 0).filter((s) => s > 0);
+  return items
+    .map((i) => i.similarity_score ?? 0)
+    .filter((s) => s > 0)
+    .sort((a, b) => b - a);
 }
 
 /** Block answers when retrieval similarity is too weak (likely off-topic). */
 export function evaluateRetrievalRelevance(
   items: RetrievedFeedbackItem[],
-  question: string
+  _question: string
 ): RetrievalRelevanceResult {
   const env = getEnv();
   const minItems = env.MIN_EVIDENCE_ITEMS;
+  const minMax = env.MIN_ANSWER_SIMILARITY;
+  const minAvg = env.MIN_ANSWER_AVG_SIMILARITY;
 
   const cosines = cosineScores(items);
-  const maxCosine = cosines.length > 0 ? Math.max(...cosines) : 0;
+  const maxCosine = cosines.length > 0 ? cosines[0] : 0;
   const topCosines = cosines.slice(0, Math.min(3, cosines.length));
   const avgCosine =
     topCosines.length > 0
       ? topCosines.reduce((a, b) => a + b, 0) / topCosines.length
       : 0;
 
-  const hasKeywordHit = items.some((i) => (i.keyword_score ?? 0) >= 0.5);
-  const knownTopic = questionHasKnownTopic(question);
-
-  // Keyword / known Spotify topic + enough hits → allow (shuffle, ads, etc.)
-  if (items.length >= minItems && (hasKeywordHit || knownTopic)) {
-    if (maxCosine >= 0.25 || hasKeywordHit || items.length >= 5) {
-      return {
-        allowed: true,
-        max_similarity: maxCosine || null,
-        avg_top_similarity: avgCosine || null,
-      };
-    }
-  }
-
-  const minMax = env.MIN_ANSWER_SIMILARITY ?? 0.3;
-  const minAvg = env.MIN_ANSWER_AVG_SIMILARITY ?? 0.27;
-
-  if (cosines.length === 0 && !hasKeywordHit) {
+  if (items.length < minItems) {
     return {
       allowed: false,
-      reason:
-        "No sufficiently similar Spotify reviews were found for this question.",
+      reason: "Not enough relevant reviews found for this query.",
+      max_similarity: maxCosine || null,
+      avg_top_similarity: avgCosine || null,
+    };
+  }
+
+  if (cosines.length === 0) {
+    return {
+      allowed: false,
+      reason: "Not enough relevant reviews found for this query.",
       max_similarity: null,
       avg_top_similarity: null,
     };
   }
 
-  if (maxCosine > 0 && (maxCosine < minMax || avgCosine < minAvg)) {
+  if (maxCosine < minMax || avgCosine < minAvg) {
     return {
       allowed: false,
-      reason:
-        "Retrieved reviews aren't closely related to this question. Try rephrasing with a Spotify-specific topic (e.g. shuffle, ads, Premium, playlists).",
+      reason: "Not enough relevant reviews found for this query.",
       max_similarity: maxCosine,
       avg_top_similarity: avgCosine,
     };
@@ -101,7 +95,7 @@ export function evaluateRetrievalRelevance(
 
   return {
     allowed: true,
-    max_similarity: maxCosine || null,
-    avg_top_similarity: avgCosine || null,
+    max_similarity: maxCosine,
+    avg_top_similarity: avgCosine,
   };
 }

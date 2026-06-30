@@ -43,7 +43,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span />
             <span />
           </button>
-          <Link href="/" className="main-brand">
+          <Link href="/dashboard" className="main-brand">
             <Image
               src="/brand/spotify-app-icon.png"
               alt=""
@@ -59,7 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <aside className="sidebar" aria-label="Main navigation">
         <div className="sidebar-header">
-          <Link href="/" className="sidebar-brand">
+          <Link href="/dashboard" className="sidebar-brand">
             <Image
               src="/brand/spotify-app-icon.png"
               alt=""

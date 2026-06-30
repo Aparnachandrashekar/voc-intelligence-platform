@@ -1316,17 +1316,21 @@ h2 {
 
 .persona-grid-page {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 1.5rem;
+  margin-top: 0.25rem;
 }
 
 .intel-persona-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   height: 100%;
 }
 
 .intel-persona-card .intel-persona-header {
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 0.75rem;
 }
 
@@ -1364,8 +1368,21 @@ h2 {
 
 .persona-view-reviews-btn {
   display: inline-flex;
-  margin-top: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1.5rem;
   text-decoration: none;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.intel-persona-panel.intel-persona-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.intel-persona-stats {
+  text-align: left;
 }
 
 .explore-segment-banner {
@@ -1802,21 +1819,36 @@ h2 {
 }
 
 .research-input-wrap {
-  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: stretch;
   margin-bottom: 2rem;
 }
 
+.research-input-wrap .research-input {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.research-input-wrap .research-submit {
+  grid-column: 2;
+}
+
 .research-input {
+  flex: 1 1 14rem;
+  min-width: 0;
   width: 100%;
   background: var(--surface-elevated);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--color-white);
   padding: 1.125rem 1.5rem;
-  padding-right: 7rem;
   border-radius: 16px;
   font-size: 1.0625rem;
   outline: none;
   transition: border-color 0.3s ease;
+  min-height: 3.25rem;
+  box-sizing: border-box;
 }
 
 .research-input:focus {
@@ -1824,14 +1856,32 @@ h2 {
 }
 
 .research-submit {
-  position: absolute;
-  right: 0.5rem;
-  top: 50%;
-  transform: translateY(-50%);
+  flex: 0 0 auto;
+  align-self: stretch;
+  min-height: 3.25rem;
+  padding-inline: 1.25rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .research-input-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .research-input-wrap .research-submit {
+    grid-column: 1;
+    width: 100%;
+  }
+}
+
+.intel-cluster-insight {
+  margin-top: 0.65rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
 
 .research-submit:hover:not(:disabled) {
-  transform: translateY(-50%) scale(1.03);
+  transform: scale(1.03);
 }
 
 .research-report {
@@ -2213,7 +2263,7 @@ h2 {
   gap: 0.25rem;
   font-size: 0.8125rem;
   color: var(--grey-5);
-  text-align: right;
+  text-align: left;
 }
 
 .intel-persona-columns {
@@ -2474,22 +2524,32 @@ h2 {
   align-items: center;
 }
 
+.report-page-filters {
+  margin: 0 0 2rem;
+  position: relative;
+  z-index: 5;
+}
+
 .filter-pill-wrap {
   display: inline-flex;
+  position: relative;
 }
 
 .filter-pill {
   appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
   height: 38px;
   padding: 0 1rem;
   border-radius: var(--radius-pill);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
+  background-color: rgba(255, 255, 255, 0.04);
   color: var(--grey-6);
   font-size: 0.8125rem;
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
+  pointer-events: auto;
   transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23888' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
@@ -2842,6 +2902,10 @@ h2 {
 .ask-green-input:focus {
   border-color: var(--color-green) !important;
   box-shadow: 0 0 0 3px rgba(30, 215, 96, 0.15);
+}
+
+.ask-green-input-wrap.research-input-wrap {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .ask-green-input-wrap .research-submit {

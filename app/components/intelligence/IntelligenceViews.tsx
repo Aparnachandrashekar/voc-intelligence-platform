@@ -4,8 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useGsapReveal } from "@/app/components/premium/useGsapReveal";
 import { formatLabel } from "@/lib/intelligence/format";
+import {
+  frustrationInsightFor,
+  themeSummaryFor,
+} from "@/lib/intelligence/theme-descriptions";
 import { PersonaIcon } from "@/app/components/premium/KpiIcons";
-import type { ThemeBriefing } from "@/lib/types/briefing";
 import type {
   RoadmapItem,
   SegmentPersona,
@@ -50,30 +53,15 @@ function ClusterCardCompact({
   cluster: ThemeCluster;
   variant?: "friction" | "opportunity" | "growth" | "polarizing";
 }) {
-  const [briefing, setBriefing] = useState<ThemeBriefing | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    fetch("/api/briefing/theme", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        theme: cluster.display_name,
-        count: cluster.count,
-        change_pct: cluster.change_pct,
-        quotes: cluster.quotes.map((q) => ({
-          content: q.content,
-          source: q.source,
-          sentiment: q.sentiment,
-        })),
-      }),
-    })
-      .then((r) => r.json())
-      .then(setBriefing)
-      .catch(() => setBriefing(null))
-      .finally(() => setLoading(false));
-  }, [cluster.id, cluster.count, cluster.display_name, cluster.change_pct, cluster.quotes]);
+  const summary = themeSummaryFor(
+    cluster.display_name,
+    cluster.count,
+    cluster.change_pct
+  );
+  const insight =
+    variant === "opportunity"
+      ? `${cluster.sentiment.positive_pct}% of mentions skew positive — worth protecting in roadmap.`
+      : frustrationInsightFor(cluster.display_name, cluster.change_pct);
 
   const sentimentLabel =
     variant === "opportunity"
@@ -96,20 +84,8 @@ function ClusterCardCompact({
         </div>
       </header>
 
-      {loading ? (
-        <div className="skeleton-line wide" />
-      ) : (
-        <>
-          <p className="intel-cluster-summary">{briefing?.ai_summary}</p>
-          {(briefing?.suggested_actions ?? []).slice(0, 2).length > 0 && (
-            <ul className="intel-actions intel-actions-compact">
-              {briefing!.suggested_actions.slice(0, 2).map((a) => (
-                <li key={a}>{a}</li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
+      <p className="intel-cluster-summary">{summary}</p>
+      <p className="intel-cluster-insight muted">{insight}</p>
     </article>
   );
 }
@@ -246,29 +222,11 @@ export function RoadmapIntelligenceView({
 }
 
 function RoadmapCardCompact({ item }: { item: RoadmapItem }) {
-  const [briefing, setBriefing] = useState<ThemeBriefing | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/briefing/theme", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        theme: item.display_name,
-        count: item.count,
-        change_pct: item.change_pct,
-        quotes: item.quotes.map((q) => ({
-          content: q.content,
-          source: q.source,
-          sentiment: q.sentiment,
-        })),
-      }),
-    })
-      .then((r) => r.json())
-      .then(setBriefing)
-      .catch(() => setBriefing(null))
-      .finally(() => setLoading(false));
-  }, [item]);
+  const summary = themeSummaryFor(
+    item.display_name,
+    item.count,
+    item.change_pct
+  );
 
   return (
     <article className="intel-cluster-card intel-cluster-compact" data-reveal>
@@ -279,11 +237,7 @@ function RoadmapCardCompact({ item }: { item: RoadmapItem }) {
           <span>{item.sentiment.positive_pct}% positive · {item.sentiment.negative_pct}% negative</span>
         </div>
       </header>
-      {loading ? (
-        <div className="skeleton-line wide" />
-      ) : (
-        <p className="intel-cluster-summary">{briefing?.ai_summary}</p>
-      )}
+      <p className="intel-cluster-summary">{summary}</p>
     </article>
   );
 }
@@ -322,43 +276,12 @@ export function PersonaPanel({
   persona,
   deprioritized = false,
   summaryOverride,
-  skipBriefingFetch = false,
 }: {
   persona: SegmentPersona;
   deprioritized?: boolean;
-  /** When set, replaces the AI theme summary (e.g. on Discovery Deep Dive). */
+  /** When set, replaces the default persona summary. */
   summaryOverride?: string;
-  skipBriefingFetch?: boolean;
 }) {
-  const [summary, setSummary] = useState<string | null>(
-    summaryOverride ?? null
-  );
-
-  useEffect(() => {
-    if (skipBriefingFetch || summaryOverride) {
-      setSummary(summaryOverride ?? null);
-      return;
-    }
-
-    fetch("/api/briefing/theme", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        theme: persona.label,
-        count: persona.volume,
-        change_pct: null,
-        quotes: persona.quotes.map((q) => ({
-          content: q.content,
-          source: q.source,
-          sentiment: q.sentiment,
-        })),
-      }),
-    })
-      .then((r) => r.json())
-      .then((d: ThemeBriefing) => setSummary(d.ai_summary))
-      .catch(() => setSummary(null));
-  }, [persona, summaryOverride, skipBriefingFetch]);
-
   return (
     <article
       className={[
@@ -388,7 +311,9 @@ export function PersonaPanel({
         </div>
       </header>
 
-      {summary && <p className="intel-cluster-summary">{summary}</p>}
+      {summaryOverride && (
+        <p className="intel-cluster-summary">{summaryOverride}</p>
+      )}
 
       <div className="intel-persona-columns">
         {persona.top_complaints.length > 0 && (

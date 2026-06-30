@@ -42,7 +42,9 @@ export function ReportFilters({
     const next = new URLSearchParams(params.toString());
     if (value) next.set(key, value);
     else next.delete(key);
-    router.push(`${basePath}?${next.toString()}`);
+    const qs = next.toString();
+    router.push(qs ? `${basePath}?${qs}` : basePath);
+    router.refresh();
   }
 
   if (variant === "compact") {
@@ -52,7 +54,11 @@ export function ReportFilters({
     const currentRange = (params.get("range") ?? "30d") as DashboardRange;
 
     return (
-      <div className="filter-pills-row" role="group" aria-label="Filters">
+      <div
+        className="filter-pills-row report-page-filters"
+        role="group"
+        aria-label="Filters"
+      >
         <label className="filter-pill-wrap">
           <span className="visually-hidden">Source</span>
           <select

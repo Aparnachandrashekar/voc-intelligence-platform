@@ -10,6 +10,8 @@ import {
   safeServerLoad,
 } from "@/lib/server-fallbacks";
 
+export const dynamic = "force-dynamic";
+
 export default async function SegmentsReportPage({
   searchParams,
 }: {
@@ -42,7 +44,7 @@ export default async function SegmentsReportPage({
         <Suspense>
           <ReportFilters basePath="/reports/segments" variant="compact" />
         </Suspense>
-        <SegmentsPersonasView report={report} />
+        <SegmentsPersonasView key={JSON.stringify(filters)} report={report} />
       </main>
   );
 }

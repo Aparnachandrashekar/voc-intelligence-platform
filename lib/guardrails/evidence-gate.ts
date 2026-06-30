@@ -64,7 +64,7 @@ export function insufficientEvidenceResponse(meta: EvidenceGateResult["meta"]): 
   return {
     status: "insufficient_evidence",
     executive_summary:
-      "Not enough matching feedback in the database to answer this question confidently.",
+      "Not enough relevant reviews found for this query.",
     detailed_analysis: "",
     key_findings: [],
     supporting_quotes: [],

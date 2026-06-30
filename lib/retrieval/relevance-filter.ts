@@ -1,26 +1,17 @@
 import { getEnv } from "@/lib/env";
-import { bestRetrievalScore } from "@/lib/guardrails/retrieval-score";
+import { itemQualifiesForEvidence } from "@/lib/guardrails/retrieval-score";
 import type { RetrievedFeedbackItem } from "@/lib/types/feedback";
 import { sortByRelevanceStable } from "@/lib/retrieval/deterministic-rank";
 
-/** Strong FTS rank required when cosine similarity is below the cutoff. */
-const MIN_KEYWORD_ONLY_RANK = 0.06;
-
 /**
- * Strict relevance gate — cosine must meet cutoff, or keyword rank must be strong.
+ * Strict relevance gate — cosine must meet cutoff, or meet floor + strong FTS rank.
  * Does not pad results to a target count.
  */
 export function itemMeetsRelevanceCutoff(
   item: RetrievedFeedbackItem,
   minCosine: number
 ): boolean {
-  const sim = item.similarity_score ?? 0;
-  if (sim >= minCosine) return true;
-
-  const kw = item.keyword_score ?? 0;
-  if (sim < 0.05 && kw >= MIN_KEYWORD_ONLY_RANK) return true;
-
-  return false;
+  return itemQualifiesForEvidence(item, minCosine);
 }
 
 /**

@@ -40,12 +40,12 @@ const envSchema = z.object({
     ),
   SCRAPE_MAX_PER_SOURCE: z.coerce.number().int().default(100),
   /** Cosine similarity floor for local MiniLM embeddings (lower than cloud nomic). */
-  MIN_RETRIEVAL_SCORE: z.coerce.number().default(0.38),
+  MIN_RETRIEVAL_SCORE: z.coerce.number().default(0.42),
   MIN_EVIDENCE_ITEMS: z.coerce.number().int().default(3),
   /** Best-match cosine similarity to block off-topic (not keyword matches). */
-  MIN_ANSWER_SIMILARITY: z.coerce.number().default(0.3),
+  MIN_ANSWER_SIMILARITY: z.coerce.number().default(0.38),
   /** Average top-3 cosine similarity to block off-topic. */
-  MIN_ANSWER_AVG_SIMILARITY: z.coerce.number().default(0.27),
+  MIN_ANSWER_AVG_SIMILARITY: z.coerce.number().default(0.34),
   QUOTE_MATCH_THRESHOLD: z.coerce.number().default(0.9),
   EXTRACTION_GROUNDING_THRESHOLD: z.coerce.number().default(0.85),
   LLM_TEMPERATURE: z.coerce.number().default(0),

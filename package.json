@@ -20,6 +20,7 @@
     "embed": "tsx scripts/embed.ts",
     "embed:active": "tsx scripts/embed.ts --active --force",
     "retrieval:audit": "tsx scripts/retrieval-audit.ts",
+    "retrieval:score-audit": "tsx scripts/retrieval-score-audit.ts",
     "retrieval:test": "tsx scripts/retrieval-test.ts",
     "refine-themes": "tsx scripts/refine-general-themes.ts",
     "corpus:cap": "tsx scripts/cap-corpus.ts",

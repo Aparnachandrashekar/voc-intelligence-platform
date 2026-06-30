@@ -7,6 +7,8 @@ import { buildFilterClause, needsEnrichmentJoin } from "@/lib/reports/filters";
 import { buildFtsOrQuery, expandQuery } from "@/lib/query-expansion";
 import { getEnv } from "@/lib/env";
 import { sortByRelevanceStable } from "@/lib/retrieval/deterministic-rank";
+import { filterBySpecificIntent, isNarrowSpecificQuery } from "@/lib/retrieval/intent-alignment";
+import { buildSemanticQueryText } from "@/lib/retrieval/semantic-query";
 import { maximalMarginalRelevance } from "@/lib/retrieval/mmr";
 import {
   buildRetrievalCacheKey,
@@ -14,8 +16,8 @@ import {
   setCachedRetrieval,
 } from "@/lib/retrieval/query-cache";
 import { applyRelevanceCutoff } from "@/lib/retrieval/relevance-filter";
+import { attachMissingSimilarityScores } from "@/lib/retrieval/score-enrichment";
 import {
-  buildQueryEmbeddingText,
   classifyRetrievalSentimentMode,
   type RetrievalSentimentMode,
 } from "@/lib/retrieval/question-intent";
@@ -281,7 +283,15 @@ async function fullTextSearchPool(
   poolSentiments: string[]
 ): Promise<RetrievedFeedbackItem[]> {
   const limit = options.limit ?? 20;
-  const expansion = expandQuery(options.query);
+  const expansion = isNarrowSpecificQuery(options.query)
+    ? {
+        original: options.query,
+        conceptPhrase: options.query,
+        embeddingVariants: [],
+        ftsTerms: [],
+        themes: [],
+      }
+    : expandQuery(options.query);
   const filters = pickSearchFilters(options);
   let { where, params } = buildFilterClause(filters, "f");
   ({ where, params } = appendExcludeClause(where, params, options.excludeIds));
@@ -334,7 +344,7 @@ async function fullTextSearchPool(
     [...params, ...terms, fetchLimit]
   );
 
-  return result.rows.map((row) => mapRow(row, { keyword: 0.5 }));
+  return result.rows.map((row) => mapRow(row, { keyword: 0.35 }));
 }
 
 function balancedPoolSentiments(): string[][] {
@@ -396,7 +406,7 @@ export async function semanticSearch(
   try {
     const mode = classifyRetrievalSentimentMode(options.query);
     const queryVector = await embedText(
-      buildQueryEmbeddingText(options.query, mode)
+      buildSemanticQueryText(options.query, mode)
     );
     const sentiments =
       mode === "balanced"
@@ -444,7 +454,7 @@ async function hybridSearchCore(
   const finalLimit = options.limit ?? 20;
   const mode = classifyRetrievalSentimentMode(options.query);
   const queryVector = await embedText(
-    buildQueryEmbeddingText(options.query, mode)
+    buildSemanticQueryText(options.query, mode)
   );
 
   const candidates = await retrieveFromSentimentMode(
@@ -453,9 +463,11 @@ async function hybridSearchCore(
     queryVector
   );
 
+  const scored = await attachMissingSimilarityScores(queryVector, candidates);
+
   return finalizeRankedResults(
     queryVector,
-    candidates,
+    scored,
     finalLimit,
     options.excludeIds
   );
@@ -521,7 +533,10 @@ export async function retrieveForQuestion(
       ranked = cached;
     } else {
       ranked = applyRelevanceCutoff(
-        await hybridSearch({ ...options, excludeIds: undefined, limit: poolLimit }),
+        filterBySpecificIntent(
+          options.query,
+          await hybridSearch({ ...options, excludeIds: undefined, limit: poolLimit })
+        ),
         poolLimit
       );
       setCachedRetrieval(cacheKey, ranked);
@@ -531,7 +546,10 @@ export async function retrieveForQuestion(
     const base =
       cached ??
       applyRelevanceCutoff(
-        await hybridSearch({ ...options, excludeIds: undefined, limit: poolLimit }),
+        filterBySpecificIntent(
+          options.query,
+          await hybridSearch({ ...options, excludeIds: undefined, limit: poolLimit })
+        ),
         poolLimit
       );
     if (!cached) {
@@ -573,7 +591,7 @@ export async function hybridSearchDebug(
   const finalLimit = options.limit ?? 20;
   const mode = classifyRetrievalSentimentMode(options.query);
   const queryVector = await embedText(
-    buildQueryEmbeddingText(options.query, mode)
+    buildSemanticQueryText(options.query, mode)
   );
   const candidates = await retrieveFromSentimentMode(
     options,

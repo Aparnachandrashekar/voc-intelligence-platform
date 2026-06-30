@@ -234,6 +234,10 @@ export async function generateExecutiveBriefing(
     };
   }
 
+  // Fast heuristic briefing from SQL stats — avoids multi-second Groq latency on page load.
+  return fallbackBriefing(stats);
+
+  /* Groq-enhanced copy (optional — re-enable for richer prose at cost of latency)
   if (!isGroqConfigured()) {
     return fallbackBriefing(stats);
   }
@@ -325,6 +329,7 @@ export async function generateExecutiveBriefing(
   } catch {
     return fallbackBriefing(stats);
   }
+  */
 }
 
 export async function generateThemeBriefing(

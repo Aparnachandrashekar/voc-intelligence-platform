@@ -89,7 +89,6 @@ export function DiscoveryBriefView({ report }: { report: DiscoveryBriefReport })
             <PersonaPanel
               persona={report.discovery_persona}
               summaryOverride={`${report.discovery_persona.volume.toLocaleString()} users actively seeking new music — frustrated when the algorithm recycles familiar tracks.`}
-              skipBriefingFetch
             />
           </div>
           <p className="discovery-persona-clarification">
