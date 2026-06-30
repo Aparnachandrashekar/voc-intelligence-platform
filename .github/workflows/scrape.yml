@@ -1,0 +1,44 @@
+name: Daily review scrape
+
+on:
+  schedule:
+    # 02:00 UTC every day
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: scrape-pipeline
+  cancel-in-progress: false
+
+jobs:
+  ingest-enrich-embed:
+    name: Scrape → enrich → embed
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      NODE_ENV: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Ingest live reviews (App Store + Play Store)
+        run: npm run ingest:live
+
+      - name: Enrich new reviews
+        run: npm run enrich -- --limit=10000
+
+      - name: Embed new reviews (active corpus, incremental)
+        run: npx tsx scripts/embed.ts --active

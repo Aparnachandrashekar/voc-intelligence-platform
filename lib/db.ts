@@ -81,6 +81,8 @@ export function getPool(): Pool {
     pool = new Pool({
       ...poolConfig,
       ssl: isLocal ? undefined : { rejectUnauthorized: false },
+      max: isLocal ? 10 : 5,
+      idleTimeoutMillis: 20_000,
     });
   }
   return pool;
