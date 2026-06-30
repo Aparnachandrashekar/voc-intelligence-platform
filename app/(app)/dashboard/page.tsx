@@ -8,6 +8,9 @@ import { RagPanel } from "@/app/components/RagPanel";
 import {
   getDashboardMetrics,
   getDashboardSummary,
+  getEmptyDashboardMetrics,
+  getEmptyDashboardSummary,
+  getEmptyPipelineStatus,
   getPipelineStatus,
   parseDashboardRange,
 } from "@/lib/dashboard/aggregations";
@@ -26,12 +29,21 @@ export default async function DashboardPage({
   const range = parseDashboardRange(params.range);
   const filters = parseReportFilters(urlParams);
 
-  const [status, summary, metrics, corpusStats] = await Promise.all([
-    getPipelineStatus(),
-    getDashboardSummary(range, filters),
-    getDashboardMetrics(range, filters),
-    getActiveCorpusStats(),
-  ]);
+  let status = getEmptyPipelineStatus();
+  let summary = getEmptyDashboardSummary(range, filters);
+  let metrics = getEmptyDashboardMetrics(range, filters);
+  let corpusStats = await getActiveCorpusStats();
+
+  try {
+    [status, summary, metrics, corpusStats] = await Promise.all([
+      getPipelineStatus(),
+      getDashboardSummary(range, filters),
+      getDashboardMetrics(range, filters),
+      getActiveCorpusStats(),
+    ]);
+  } catch (error) {
+    console.error("[dashboard] database unavailable:", error);
+  }
 
   return (
     <main className="page dashboard-page">

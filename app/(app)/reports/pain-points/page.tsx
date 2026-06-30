@@ -4,6 +4,10 @@ import { VocIntelligenceView } from "@/app/components/intelligence/IntelligenceV
 import { formatPersona } from "@/lib/intelligence/format";
 import { getVocIntelligenceReport } from "@/lib/intelligence/aggregations";
 import { parseReportFilters } from "@/lib/reports/filters";
+import {
+  emptyVocIntelligenceReport,
+  safeServerLoad,
+} from "@/lib/server-fallbacks";
 
 export default async function PainPointsReportPage({
   searchParams,
@@ -16,7 +20,11 @@ export default async function PainPointsReportPage({
       Object.entries(params).filter(([, v]) => v) as [string, string][]
     )
   );
-  const report = await getVocIntelligenceReport(filters);
+  const report = await safeServerLoad(
+    "pain-points",
+    () => getVocIntelligenceReport(filters),
+    emptyVocIntelligenceReport(filters)
+  );
   const segmentLabel = filters.segment
     ? formatPersona(filters.segment)
     : null;

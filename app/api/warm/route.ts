@@ -9,10 +9,22 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     await warmEmbeddingModel();
-    const embeddings = await countEmbeddings();
+
+    let embeddings: number | null = null;
+    let dbWarning: string | undefined;
+    try {
+      embeddings = await countEmbeddings();
+    } catch (error) {
+      dbWarning =
+        error instanceof Error ? error.message : "Database unavailable";
+      console.warn("[api/warm] embeddings count skipped:", dbWarning);
+    }
+
     return NextResponse.json({
       ready: true,
       embeddings,
+      db_ok: !dbWarning,
+      ...(dbWarning ? { warning: dbWarning } : {}),
       groq_insights: isGroqConfigured(),
     });
   } catch (error) {

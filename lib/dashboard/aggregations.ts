@@ -608,3 +608,83 @@ export function parseDashboardRange(
   }
   return "30d";
 }
+
+const EMPTY_KPI: KpiDelta = {
+  value: 0,
+  previous: 0,
+  delta: 0,
+  delta_pct: null,
+  direction: "flat",
+};
+
+export function getEmptyPipelineStatus(): PipelineStatusResponse {
+  return {
+    sources: SOURCE_TARGETS.map((target) => ({
+      label: target.label,
+      pipeline: target.pipeline,
+      source: target.source,
+      health: "offline",
+      last_updated: null,
+      inserted_count: 0,
+    })),
+    global_status: "degraded",
+    last_refresh: null,
+  };
+}
+
+export function getEmptyDashboardSummary(
+  range: DashboardRange,
+  filters: ReportFilters
+): DashboardSummary {
+  return {
+    range,
+    total_reviews: 0,
+    live_count: 0,
+    historical_count: 0,
+    avg_rating: EMPTY_KPI,
+    positive_pct: EMPTY_KPI,
+    negative_pct: EMPTY_KPI,
+    neutral_pct: EMPTY_KPI,
+    volume: EMPTY_KPI,
+    net_sentiment: EMPTY_KPI,
+    headline: "Database unavailable — showing empty dashboard.",
+    sentiment_chart: [],
+    filters,
+  };
+}
+
+export function getEmptyDashboardMetrics(
+  range: DashboardRange,
+  filters: ReportFilters
+): DashboardMetrics {
+  return {
+    range,
+    enriched_count: 0,
+    rating_distribution: [],
+    daily_volume: [],
+    daily_rating: [],
+    sentiment_over_time: [],
+    source_breakdown: [],
+    top_themes: [],
+    pain_points: [],
+    feature_requests: [],
+    live_vs_historical: {
+      has_historical: false,
+      live: {
+        count: 0,
+        avg_rating: null,
+        positive_pct: 0,
+        negative_pct: 0,
+        neutral_pct: 0,
+      },
+      historical: {
+        count: 0,
+        avg_rating: null,
+        positive_pct: 0,
+        negative_pct: 0,
+        neutral_pct: 0,
+      },
+    },
+    filters,
+  };
+}

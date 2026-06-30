@@ -314,16 +314,29 @@ export function RagPanel({
 
     fetch("/api/warm", { signal: controller.signal })
       .then(async (r) => {
-        const d = (await r.json()) as { ready?: boolean; error?: string };
+        const d = (await r.json()) as {
+          ready?: boolean;
+          error?: string;
+          warning?: string;
+        };
         if (cancelled) return;
-        setSearchReady(Boolean(d.ready));
+
         if (d.ready) {
-          setWarmNote(null);
-        } else {
+          setSearchReady(true);
           setWarmNote(
-            "Search index still loading — your first question may take a moment."
+            d.warning
+              ? "Database busy — search may be slow until connections free up."
+              : null
           );
+          return;
         }
+
+        setSearchReady(true);
+        setWarmNote(
+          d.error?.includes("max clients")
+            ? "Database connection limit reached — try again in a few minutes."
+            : "Search model still loading — your first question may take a moment."
+        );
       })
       .catch(() => {
         if (cancelled) return;

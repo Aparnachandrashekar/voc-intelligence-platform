@@ -5,6 +5,10 @@ import { getActiveCorpusStats } from "@/lib/corpus-stats";
 import { formatCorpusSegmentsIntro } from "@/lib/intelligence/copy";
 import { getSegmentsPersonasReport } from "@/lib/segments/aggregations";
 import { parseReportFilters } from "@/lib/reports/filters";
+import {
+  emptySegmentsPersonasReport,
+  safeServerLoad,
+} from "@/lib/server-fallbacks";
 
 export default async function SegmentsReportPage({
   searchParams,
@@ -18,7 +22,11 @@ export default async function SegmentsReportPage({
     )
   );
   const [report, corpusStats] = await Promise.all([
-    getSegmentsPersonasReport(filters),
+    safeServerLoad(
+      "segments",
+      () => getSegmentsPersonasReport(filters),
+      emptySegmentsPersonasReport(filters)
+    ),
     getActiveCorpusStats(),
   ]);
 

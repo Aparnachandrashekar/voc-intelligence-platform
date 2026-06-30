@@ -1,6 +1,10 @@
 import { DiscoveryBriefView } from "@/app/components/discovery/DiscoveryBriefView";
 import { getDiscoveryBriefReport } from "@/lib/discovery/brief";
 import { parseReportFilters } from "@/lib/reports/filters";
+import {
+  emptyDiscoveryBriefReport,
+  safeServerLoad,
+} from "@/lib/server-fallbacks";
 
 export default async function DiscoveryDeepDivePage({
   searchParams,
@@ -13,7 +17,11 @@ export default async function DiscoveryDeepDivePage({
       Object.entries(params).filter(([, v]) => v) as [string, string][]
     )
   );
-  const report = await getDiscoveryBriefReport(filters);
+  const report = await safeServerLoad(
+    "discovery",
+    () => getDiscoveryBriefReport(filters),
+    emptyDiscoveryBriefReport(filters)
+  );
 
   return (
     <main className="page dashboard-page discovery-page">

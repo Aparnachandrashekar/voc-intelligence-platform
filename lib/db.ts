@@ -78,11 +78,15 @@ export function getPool(): Pool {
   if (!pool) {
     const config = parsePgConfig(getEnv().DATABASE_URL);
     const { isLocal, ...poolConfig } = config;
+    const isTransactionPooler = !isLocal && poolConfig.port === 6543;
     pool = new Pool({
       ...poolConfig,
       ssl: isLocal ? undefined : { rejectUnauthorized: false },
-      max: isLocal ? 10 : 5,
-      idleTimeoutMillis: 20_000,
+      max: isLocal ? 10 : 1,
+      idleTimeoutMillis: 5_000,
+      connectionTimeoutMillis: 10_000,
+      allowExitOnIdle: !isLocal,
+      ...(isTransactionPooler ? { prepareThreshold: 0 } : {}),
     });
   }
   return pool;
