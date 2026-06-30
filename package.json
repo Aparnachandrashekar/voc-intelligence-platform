@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "NEXT_DIST_DIR=.next-build next build",
-    "start": "NEXT_DIST_DIR=.next-build next start -p ${PORT:-3001}",
+    "build": "next build",
+    "build:local": "NEXT_DIST_DIR=.next-build next build",
+    "start": "next start -p ${PORT:-3001}",
+    "start:local": "NEXT_DIST_DIR=.next-build next start -p ${PORT:-3001}",
     "lint": "next lint",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:start": "bash scripts/start-db.sh",
